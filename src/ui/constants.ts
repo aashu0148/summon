@@ -3,7 +3,7 @@ import { defaultTextareaKeyBindings } from "@opentui/core";
 import type { Usage, AskQuestion } from "../session/claude-session.ts";
 import type { Theme } from "./theme.ts";
 
-export type Role = "you" | "claude" | "sys" | "err" | "file";
+export type Role = "you" | "claude" | "sys" | "err" | "file" | "tool";
 export type Turn = { role: Role; text: string };
 export type Opt = { name: string; description: string; value: string };
 export type Picker = { kind: "resume" | "model" | "theme"; title: string; options: Opt[] };
@@ -24,7 +24,9 @@ export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", 
 
 // Human-readable "what Claude is doing right now" label for a tool. Shown as an ephemeral
 // status while a tool runs so the user isn't left staring at a bare "thinking…" during
-// tool use (Read/Bash/Grep/… emit no delta or thinking text, only a `tool` event).
+// tool use (Read/Bash/Grep/… emit no delta or thinking text, only a `tool` event). Each
+// phrase leads with the present-participle verb, so toolActivity() can swap the generic
+// noun ("a file") for the concrete target ("src/foo.ts") when we know it.
 const TOOL_VERB: Record<string, string> = {
   Bash: "running a command",
   Read: "reading a file",
@@ -40,7 +42,19 @@ const TOOL_VERB: Record<string, string> = {
   Task: "running a subagent",
   TodoWrite: "planning",
 };
-export const toolActivity = (name: string) => TOOL_VERB[name] ?? `running ${name}`;
+
+// Live status label, e.g. "reading src/foo.ts". With a target we keep just the verb and
+// append it; without one we fall back to the full generic phrase ("reading a file").
+export const toolActivity = (name: string, detail = "") => {
+  const phrase = TOOL_VERB[name] ?? `running ${name}`;
+  if (!detail) return phrase;
+  const verb = phrase.split(" ")[0]; // "reading a file" → "reading"
+  return `${verb} ${detail}`;
+};
+
+// Persistent transcript row for a tool call, e.g. "→ Read  src/foo.ts". Named after the
+// actual tool (not the verb) so the trace reads like Claude Code's tool list.
+export const toolLine = (name: string, detail: string) => (detail ? `→ ${name}  ${detail}` : `→ ${name}`);
 
 // Trailing @-mention token being typed, e.g. "look at @src/ap" → captures "src/ap".
 export const MENTION_RE = /(?:^|\s)@([^\s]*)$/;
@@ -72,11 +86,11 @@ export function groupTurns(turns: Turn[]): TurnGroup[] {
   return groups;
 }
 
-export const LABEL_TEXT: Record<Role, string> = { you: "YOU", claude: "CLAUDE", sys: "SYS", err: "ERR", file: "EDIT" };
+export const LABEL_TEXT: Record<Role, string> = { you: "YOU", claude: "CLAUDE", sys: "SYS", err: "ERR", file: "EDIT", tool: "TOOL" };
 export const labelFg = (t: Theme, role: Role) =>
-  role === "you" ? t.user : role === "claude" ? t.accent : role === "sys" ? t.sys : role === "file" ? t.ok : t.warn;
+  role === "you" ? t.user : role === "claude" ? t.accent : role === "sys" ? t.sys : role === "file" ? t.ok : role === "tool" ? t.accentDim : t.warn;
 export const bodyFg = (t: Theme, role: Role) =>
-  role === "claude" ? t.ink : role === "err" ? t.warn : role === "file" ? t.ok : t.muted;
+  role === "claude" ? t.ink : role === "err" ? t.warn : role === "file" ? t.ok : role === "tool" ? t.accentDim : t.muted;
 
 export const ZERO: Usage = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
 

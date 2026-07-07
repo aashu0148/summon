@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { ClaudeSession, fileChangeFromToolUse, type SessionEvent } from "../../src/session/claude-session.ts";
+import { ClaudeSession, fileChangeFromToolUse, toolTarget, type SessionEvent } from "../../src/session/claude-session.ts";
 
 // These tests exercise the stream-json → SessionEvent parsing OFFLINE — no `claude`
 // binary is spawned and no billed calls are made (that's what scripts/smoke.ts and
@@ -41,6 +41,29 @@ describe("fileChangeFromToolUse", () => {
   test("empty string content counts as 0 lines", () => {
     expect(fileChangeFromToolUse("Write", { file_path: "a.ts", content: "" }))
       .toEqual({ path: "a.ts", added: 0, removed: 0 });
+  });
+});
+
+describe("toolTarget", () => {
+  test("pulls the file path for read/write tools", () => {
+    expect(toolTarget("Read", { file_path: "/a/b.ts" })).toBe("/a/b.ts");
+    expect(toolTarget("Write", { file_path: "x.ts", content: "…" })).toBe("x.ts");
+  });
+  test("pulls the command / pattern / url / query", () => {
+    expect(toolTarget("Bash", { command: "npm test" })).toBe("npm test");
+    expect(toolTarget("Grep", { pattern: "TODO" })).toBe("TODO");
+    expect(toolTarget("Glob", { pattern: "**/*.ts" })).toBe("**/*.ts");
+    expect(toolTarget("WebFetch", { url: "https://x.dev" })).toBe("https://x.dev");
+    expect(toolTarget("WebSearch", { query: "bun test" })).toBe("bun test");
+  });
+  test("NotebookEdit and Task fall back through fields", () => {
+    expect(toolTarget("NotebookEdit", { file_path: "n.ipynb" })).toBe("n.ipynb");
+    expect(toolTarget("Task", { subagent_type: "Explore" })).toBe("Explore");
+  });
+  test("unknown tool or missing input yields empty string", () => {
+    expect(toolTarget("TodoWrite", { todos: [] })).toBe("");
+    expect(toolTarget("Read", {})).toBe("");
+    expect(toolTarget("Read", undefined)).toBe("");
   });
 });
 
@@ -117,7 +140,7 @@ describe("control requests", () => {
   test("can_use_tool for a normal tool auto-approves → tool event", () => {
     const { events, feed } = harness();
     feed({ type: "control_request", request_id: "r1", request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "ls" } } });
-    expect(only(events, "tool")).toEqual([{ type: "tool", name: "Bash" }]);
+    expect(only(events, "tool")).toEqual([{ type: "tool", name: "Bash", detail: "ls" }]);
     expect(only(events, "ask")).toEqual([]);
   });
 

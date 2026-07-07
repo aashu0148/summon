@@ -3,7 +3,7 @@
 // so if we forwarded "/resume" as a user message claude would just answer it in
 // prose. We intercept a leading "/" in the input and act locally instead.
 
-import { fmtTok } from "../lib/format.ts";
+import { fmtTok, inTok } from "../lib/format.ts";
 
 export type CommandCtx = {
   /** push a dim SYS line into the conversation */
@@ -29,14 +29,22 @@ export type CommandCtx = {
   /** current session id */
   session: () => string;
   /** cumulative token + cost totals for the current session */
-  usage: () => { input: number; output: number; costUsd: number };
+  usage: () => { input: number; output: number; cacheRead: number; cacheCreate: number; costUsd: number };
+  /** open the plan-usage overlay (fetches real subscription limits from Anthropic) */
+  showUsage: () => void;
 };
 
 /** Render session usage totals as the multi-line body of the `/usage` output. Pure so it's testable. */
-export function formatUsage(u: { input: number; output: number; costUsd: number }): string {
+export function formatUsage(u: { input: number; output: number; cacheRead: number; cacheCreate: number; costUsd: number }): string {
+  // "input" from the API is only the fresh, uncached tokens. During tool-use turns the
+  // bulk of what's sent is replayed from the prompt cache, so break those out explicitly
+  // rather than hiding them — otherwise the input line looks implausibly small.
   return [
     "usage this session:",
     `  input tokens    ${fmtTok(u.input)}`,
+    `  cache read      ${fmtTok(u.cacheRead)}`,
+    `  cache write     ${fmtTok(u.cacheCreate)}`,
+    `  total input     ${fmtTok(inTok(u))}`,
     `  output tokens   ${fmtTok(u.output)}`,
     `  est. cost       ~$${u.costUsd.toFixed(4)}`,
   ].join("\n");
@@ -107,7 +115,11 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "usage",
-    aliases: ["cost"],
+    description: "show your Claude plan usage (session + weekly limits)",
+    run: (_args, ctx) => ctx.showUsage(),
+  },
+  {
+    name: "cost",
     description: "show token usage and cost for this session",
     run: (_args, ctx) => ctx.print(formatUsage(ctx.usage())),
   },

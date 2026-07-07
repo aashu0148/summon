@@ -1,11 +1,12 @@
 import type { Theme } from "../theme.ts";
 import { CWD } from "../constants.ts";
 import { fmtTok } from "../../lib/format.ts";
+import type { Usage } from "../../session/claude-session.ts";
 
 type Props = {
   t: Theme;
   model: string;
-  sessionTok: { input: number; output: number };
+  sessionTok: Usage;
   cost: number;
 };
 

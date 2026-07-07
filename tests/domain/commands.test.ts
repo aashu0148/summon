@@ -19,14 +19,15 @@ const CMDS: Command[] = [
 ];
 
 // A CommandCtx stub that records what each method was called with.
-function stubCtx(): CommandCtx & { prints: string[]; prompts: { wire: string; display?: string }[] } {
+function stubCtx(): CommandCtx & { prints: string[]; prompts: { wire: string; display?: string }[]; usageOpens: number } {
   const prints: string[] = [];
   const prompts: { wire: string; display?: string }[] = [];
-  return {
+  const ctx = {
     prints,
     prompts,
-    print: (t) => prints.push(t),
-    sendPrompt: (wire, display) => prompts.push({ wire, display }),
+    usageOpens: 0,
+    print: (t: string) => prints.push(t),
+    sendPrompt: (wire: string, display?: string) => prompts.push({ wire, display }),
     clear: () => {},
     newSession: () => {},
     resume: () => {},
@@ -36,8 +37,10 @@ function stubCtx(): CommandCtx & { prints: string[]; prompts: { wire: string; di
     quit: () => {},
     model: () => "opus",
     session: () => "abcd",
-    usage: () => ({ input: 0, output: 0, costUsd: 0 }),
+    usage: () => ({ input: 0, output: 0, cacheRead: 0, cacheCreate: 0, costUsd: 0 }),
+    showUsage: () => { ctx.usageOpens++; },
   };
+  return ctx;
 }
 
 describe("formatCommandHint", () => {
@@ -99,26 +102,34 @@ describe("completeCommand", () => {
 
 describe("formatUsage", () => {
   test("renders totals with compact tokens and 4-decimal cost", () => {
-    const out = formatUsage({ input: 12300, output: 950, costUsd: 0.1234 });
+    const out = formatUsage({ input: 12300, output: 950, cacheRead: 0, cacheCreate: 0, costUsd: 0.1234 });
     expect(out).toContain("input tokens    12.3k");
     expect(out).toContain("output tokens   950");
     expect(out).toContain("est. cost       ~$0.1234");
   });
+
+  test("breaks out cache tokens and a true total-input line", () => {
+    const out = formatUsage({ input: 900, output: 5000, cacheRead: 340000, cacheCreate: 8000, costUsd: 0.5 });
+    expect(out).toContain("cache read      340k");
+    expect(out).toContain("cache write     8.0k");
+    expect(out).toContain("total input     349k"); // 900 + 340000 + 8000 = 348900 -> 349k
+  });
 });
 
 describe("/usage command", () => {
-  test("prints the session usage totals via ctx.usage()", () => {
+  test("opens the plan-usage overlay via ctx.showUsage() (no session-token print)", () => {
     const ctx = stubCtx();
-    ctx.usage = () => ({ input: 2000, output: 500, costUsd: 0.05 });
     expect(dispatchCommand("/usage", ctx, COMMANDS)).toBe(true);
-    expect(ctx.prints[0]).toContain("usage this session:");
-    expect(ctx.prints[0]).toContain("2.0k");
+    expect(ctx.usageOpens).toBe(1);
+    expect(ctx.prints).toEqual([]);
   });
 
-  test("/cost is an alias for /usage", () => {
+  test("/cost prints the session token + cost totals", () => {
     const ctx = stubCtx();
+    ctx.usage = () => ({ input: 2000, output: 500, cacheRead: 0, cacheCreate: 0, costUsd: 0.05 });
     expect(dispatchCommand("/cost", ctx, COMMANDS)).toBe(true);
     expect(ctx.prints[0]).toContain("usage this session:");
+    expect(ctx.prints[0]).toContain("2.0k");
   });
 });
 

@@ -1,5 +1,6 @@
 import type { Theme } from "../theme.ts";
 import { LABEL_TEXT, labelFg, bodyFg, groupTurns, type Turn } from "../constants.ts";
+import { markdownStyle } from "../markdown-style.ts";
 
 type Props = {
   t: Theme;
@@ -15,6 +16,10 @@ type Props = {
 // The conversation transcript — past turns, the in-flight thinking/answer blocks, and a
 // single always-on status line while a turn runs. Sticky-scrolled to the bottom.
 export function Conversation({ t, turns, streaming, thinking, busy, spin, activity, hud }: Props) {
+  // Claude's replies arrive as markdown; render them formatted (headings, bold, code
+  // blocks, lists…) via OpenTUI's markdown renderable, tinted with the active theme.
+  // conceal hides the raw ** ` # markers; other roles stay plain text.
+  const md = markdownStyle(t);
   return (
     <scrollbox flexGrow={1} flexShrink={1} minHeight={0} paddingLeft={2} paddingTop={1} backgroundColor={t.bg} stickyScroll stickyStart="bottom">
       {turns.length === 0 && !streaming && !thinking ? (
@@ -23,9 +28,13 @@ export function Conversation({ t, turns, streaming, thinking, busy, spin, activi
       {groupTurns(turns).map((group, i) => (
         <box key={i} flexDirection="column" marginTop={i === 0 ? 0 : 1}>
           <text content={LABEL_TEXT[group.role]} fg={labelFg(t, group.role)} />
-          {group.texts.map((text, j) => (
-            <text key={j} content={text} fg={bodyFg(t, group.role)} marginTop={j === 0 ? 0 : 1} />
-          ))}
+          {group.texts.map((text, j) =>
+            group.role === "claude" ? (
+              <markdown key={j} content={text} syntaxStyle={md} fg={t.ink} conceal marginTop={j === 0 ? 0 : 1} />
+            ) : (
+              <text key={j} content={text} fg={bodyFg(t, group.role)} marginTop={j === 0 ? 0 : 1} />
+            ),
+          )}
         </box>
       ))}
       {thinking ? (
@@ -43,7 +52,10 @@ export function Conversation({ t, turns, streaming, thinking, busy, spin, activi
           marginTop={turns[turns.length - 1]?.role === "claude" ? 1 : turns.length || thinking ? 1 : 0}
         >
           {turns[turns.length - 1]?.role === "claude" ? null : <text content="CLAUDE" fg={t.accent} />}
-          <text content={streaming + "▌"} fg={t.ink} />
+          {/* streaming: keep the trailing block unstable so partial markdown (e.g. an
+              unclosed code fence) reflows as more text arrives. The busy line below is
+              the liveness cue, so no block cursor here. */}
+          <markdown content={streaming} syntaxStyle={md} fg={t.ink} conceal streaming />
         </box>
       ) : null}
       {/* one always-on status line while busy — spinner + what claude is doing right

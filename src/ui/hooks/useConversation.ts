@@ -5,7 +5,20 @@ import { routeMessage, enqueue, drain, type QueueItem } from "../../domain/queue
 import { buildTitle, titleLabel, titleSequence } from "../../domain/title.ts";
 import { generateTitle } from "../../domain/title-gen.ts";
 import { saveTitle } from "../../title-store.ts";
-import { SPINNER, ZERO, PROJECT, toolActivity, type Turn, type Ask } from "../constants.ts";
+import { SPINNER, ZERO, PROJECT, toolActivity, toolLine, type Turn, type Ask } from "../constants.ts";
+
+// File-mutating tools already get a nicer "EDIT ✎ path +N −M" row via the file_change
+// event, so we don't also add a plain TOOL trace row for them (would double up).
+const MUTATING = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
+
+// Squeeze a tool target onto one transcript line: cwd-relative, whitespace collapsed
+// (multi-line Bash commands become one line), and capped so it never wraps the pane.
+const shortTarget = (detail: string) => {
+  let x = detail.replace(/\s+/g, " ").trim();
+  const cwd = process.cwd() + "/";
+  if (x.startsWith(cwd)) x = x.slice(cwd.length);
+  return x.length > 60 ? x.slice(0, 59) + "…" : x;
+};
 
 /**
  * The conversation engine: owns the live ClaudeSession, the stream-event reducer, all
@@ -37,7 +50,7 @@ export function useConversation() {
   const [tick, setTick] = useState(0);
   const [live, setLive] = useState<Usage>(ZERO); // current-turn token counts
   const [activity, setActivity] = useState(""); // ephemeral status label (current tool)
-  const [sessionTok, setSessionTok] = useState({ input: 0, output: 0 });
+  const [sessionTok, setSessionTok] = useState<Usage>(ZERO);
   const [models, setModels] = useState<string[]>([]);
   const [status, setStatus] = useState({ model: "—", cost: 0, session: "—" });
   const [genTitle, setGenTitle] = useState(""); // model-named session title (empty until generated)
@@ -69,10 +82,16 @@ export function useConversation() {
         thinkDirtyRef.current = true;
         if (activityRef.current) { activityRef.current = ""; activityDirtyRef.current = true; }
         break;
-      case "tool":
-        activityRef.current = toolActivity(e.name);
+      case "tool": {
+        const target = shortTarget(e.detail);
+        activityRef.current = toolActivity(e.name, target);
         activityDirtyRef.current = true;
+        // Persist a compact trace row so the user can scroll back and see what Claude
+        // actually did (which files it read, commands it ran), like Claude Code's tool
+        // list. Mutating tools are skipped — they get the richer EDIT row instead.
+        if (!MUTATING.has(e.name)) setTurns((p) => [...p, { role: "tool", text: toolLine(e.name, target) }]);
         break;
+      }
       case "usage":
         usageRef.current = e.usage;
         usageDirtyRef.current = true;
@@ -88,7 +107,12 @@ export function useConversation() {
         break;
       case "result":
         setStatus((p) => ({ ...p, cost: e.costUsd }));
-        setSessionTok((p) => ({ input: p.input + e.usage.input, output: p.output + e.usage.output }));
+        setSessionTok((p) => ({
+          input: p.input + e.usage.input,
+          output: p.output + e.usage.output,
+          cacheRead: p.cacheRead + e.usage.cacheRead,
+          cacheCreate: p.cacheCreate + e.usage.cacheCreate,
+        }));
         usageRef.current = ZERO;
         activityRef.current = "";
         setLive(ZERO);
@@ -244,7 +268,7 @@ export function useConversation() {
 
   const newSession = () => {
     setTurns([]);
-    setSessionTok({ input: 0, output: 0 });
+    setSessionTok(ZERO);
     pushSys("started a fresh session.");
     startSession();
   };

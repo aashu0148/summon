@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { fmtTok, oneLine, totalTok } from "../../src/lib/format.ts";
+import { fmtTok, inTok, oneLine, totalTok } from "../../src/lib/format.ts";
 
 test("fmtTok: below 1000 is verbatim", () => {
   expect(fmtTok(0)).toBe("0");
@@ -25,14 +25,25 @@ test("fmtTok: millions get one decimal + M", () => {
 
 test("totalTok adds the in-flight turn onto the completed-session total", () => {
   // footer reflects streaming in real time: prior turns + current live turn
-  expect(totalTok({ input: 3800, output: 14400 }, { input: 997, output: 42900 }))
-    .toEqual({ input: 4797, output: 57300 });
+  expect(totalTok(
+    { input: 3800, output: 14400, cacheRead: 100000, cacheCreate: 2000 },
+    { input: 997, output: 42900, cacheRead: 50000, cacheCreate: 500 },
+  )).toEqual({ input: 4797, output: 57300, cacheRead: 150000, cacheCreate: 2500 });
 });
 
 test("totalTok with a zeroed live turn is just the session total", () => {
   // after a `result` event live resets to zero, so the footer holds steady
-  expect(totalTok({ input: 4797, output: 57300 }, { input: 0, output: 0 }))
-    .toEqual({ input: 4797, output: 57300 });
+  expect(totalTok(
+    { input: 4797, output: 57300, cacheRead: 150000, cacheCreate: 2500 },
+    { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 },
+  )).toEqual({ input: 4797, output: 57300, cacheRead: 150000, cacheCreate: 2500 });
+});
+
+test("inTok sums fresh input with cache read + write — the true wire volume", () => {
+  // the symptom: `input` alone barely moves during tool use because the growing
+  // conversation is replayed from cache. inTok surfaces what actually went over.
+  expect(inTok({ input: 900, output: 5000, cacheRead: 340000, cacheCreate: 8000 }))
+    .toBe(348900);
 });
 
 test("oneLine collapses whitespace and trims", () => {

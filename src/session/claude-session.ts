@@ -45,6 +45,40 @@ export function fileChangeFromToolUse(name: string, input: any): FileChange | nu
   return null;
 }
 
+/**
+ * A short human "target" for a tool call — the file it reads, the command it runs, the
+ * pattern it searches — pulled from the tool's input. Lets the UI show "reading
+ * src/foo.ts" and a persistent trace row instead of a bare "reading a file". Returns ""
+ * when the tool has no single meaningful target (the UI falls back to a generic verb).
+ */
+export function toolTarget(name: string, input: any): string {
+  const s = (v: any) => (typeof v === "string" ? v : "");
+  switch (name) {
+    case "Read":
+    case "Write":
+    case "Edit":
+    case "MultiEdit":
+      return s(input?.file_path);
+    case "NotebookEdit":
+      return s(input?.notebook_path) || s(input?.file_path);
+    case "Bash":
+      return s(input?.command);
+    case "Grep":
+    case "Glob":
+      return s(input?.pattern);
+    case "LS":
+      return s(input?.path);
+    case "WebFetch":
+      return s(input?.url);
+    case "WebSearch":
+      return s(input?.query);
+    case "Task":
+      return s(input?.description) || s(input?.subagent_type);
+    default:
+      return "";
+  }
+}
+
 // AskUserQuestion tool input — the interactive "pick an option" prompt.
 export type AskQuestion = {
   question: string;
@@ -62,7 +96,7 @@ export type SessionEvent =
   | { type: "rate_limit"; kind: string; status: string }
   | { type: "result"; costUsd: number; ms: number; text: string; usage: Usage }
   | { type: "available_models"; models: string[] }
-  | { type: "tool"; name: string }                  // a tool was invoked (auto-approved)
+  | { type: "tool"; name: string; detail: string }  // a tool was invoked (auto-approved); detail = its target
   | { type: "file_change"; path: string; added: number; removed: number } // a file was written/edited
   | { type: "ask"; requestId: string; questions: AskQuestion[] } // AskUserQuestion — needs the user to pick
   | { type: "control"; subtype: string; raw: any }  // unhandled control request (surfaced, not hung)
@@ -251,7 +285,7 @@ export class ClaudeSession extends EventEmitter {
       // Every other tool: auto-approve — permission policy is the underlying claude's
       // job (it runs in --permission-mode auto by default), not ours. We never prompt.
       this.writeControlResponse(rid, { behavior: "allow", updatedInput: req.input ?? {} });
-      this.emit("event", { type: "tool", name: tool });
+      this.emit("event", { type: "tool", name: tool, detail: toolTarget(tool, req.input) });
       return;
     }
     if (sub === "initialize") return; // no response required

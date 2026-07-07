@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { fileChangeFromToolUse } from "../session/claude-session.ts";
+import { fileChangeFromToolUse, toolTarget } from "../session/claude-session.ts";
 import { loadTitles, type TitleStore } from "../title-store.ts";
 
 // Claude Code stores each session as ~/.claude/projects/<encoded-cwd>/<id>.jsonl,
@@ -20,7 +20,7 @@ export function sessionLabel(m: SessionMeta): string {
 }
 
 // A reconstructed conversation entry for replaying a resumed session into the UI.
-export type TranscriptTurn = { role: "you" | "claude" | "file"; text: string };
+export type TranscriptTurn = { role: "you" | "claude" | "file" | "tool"; text: string };
 
 function projectDir(cwd: string): string {
   return join(homedir(), ".claude", "projects", cwd.replace(/\//g, "-"));
@@ -122,6 +122,13 @@ export function loadTranscript(sessionId: string, cwd: string): TranscriptTurn[]
           if (fc) {
             const rel = fc.path.startsWith(cwd + "/") ? fc.path.slice(cwd.length + 1) : fc.path;
             turns.push({ role: "file", text: `✎ ${rel}  +${fc.added} −${fc.removed}` });
+          } else {
+            // Non-mutating tool (Read/Bash/Grep/…): replay it as the same "→ Tool target"
+            // trace the live view shows, so a resumed chat isn't missing that history.
+            let t = toolTarget(b.name, b.input).replace(/\s+/g, " ").trim();
+            if (t.startsWith(cwd + "/")) t = t.slice(cwd.length + 1);
+            if (t.length > 60) t = t.slice(0, 59) + "…";
+            turns.push({ role: "tool", text: t ? `→ ${b.name}  ${t}` : `→ ${b.name}` });
           }
         }
       }

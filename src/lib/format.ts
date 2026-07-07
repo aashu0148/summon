@@ -11,7 +11,13 @@ export function fmtTok(n: number): string {
 // collapse all whitespace runs to single spaces and trim
 export const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
 
-type Tok = { input: number; output: number };
+type Tok = { input: number; output: number; cacheRead: number; cacheCreate: number };
+
+// True input volume sent to the API: the fresh (uncached) input plus everything
+// replayed from / written to the prompt cache. During a tool-use turn nearly all of
+// the growing conversation is a cache read, so `input` alone barely moves — this is
+// the number that reflects what actually went over the wire.
+export const inTok = (t: Tok): number => t.input + t.cacheRead + t.cacheCreate;
 
 // Running session token total: completed turns (sessionTok) plus the in-flight turn
 // (live). The footer uses this so its counts track streaming in real time instead of
@@ -20,4 +26,6 @@ type Tok = { input: number; output: number };
 export const totalTok = (sessionTok: Tok, live: Tok): Tok => ({
   input: sessionTok.input + live.input,
   output: sessionTok.output + live.output,
+  cacheRead: sessionTok.cacheRead + live.cacheRead,
+  cacheCreate: sessionTok.cacheCreate + live.cacheCreate,
 });

@@ -10,11 +10,13 @@ import { useConversation } from "./hooks/useConversation.ts";
 import { useComposer } from "./hooks/useComposer.ts";
 import { useAskFlow } from "./hooks/useAskFlow.ts";
 import { usePickers } from "./hooks/usePickers.ts";
+import { useUsage } from "./hooks/useUsage.ts";
 import { Header } from "./components/Header.tsx";
 import { Conversation } from "./components/Conversation.tsx";
 import { OtherInput } from "./components/OtherInput.tsx";
 import { OverlaySelect } from "./components/OverlaySelect.tsx";
 import { HintsPanel } from "./components/HintsPanel.tsx";
+import { UsagePanel } from "./components/UsagePanel.tsx";
 import { QueuePanel } from "./components/QueuePanel.tsx";
 import { InputBar } from "./components/InputBar.tsx";
 import { StatusBar } from "./components/StatusBar.tsx";
@@ -33,6 +35,8 @@ export function App() {
   const allCommands = useMemo(() => [...COMMANDS, ...skillsAsCommands(skills)], [skills]);
 
   const composer = useComposer(allCommands);
+  const usage = useUsage();
+  const usageOpen = usage.usage !== null;
 
   const setTheme = (name: string) => {
     if (!THEMES[name]) { conv.pushSys(`unknown theme: ${name}  ·  try ${THEME_NAMES.join(", ")}`); return; }
@@ -69,7 +73,8 @@ export function App() {
     quit,
     model: () => shortModel(conv.status.model),
     session: () => conv.status.session,
-    usage: () => ({ input: conv.sessionTok.input, output: conv.sessionTok.output, costUsd: conv.status.cost }),
+    usage: () => ({ ...conv.sessionTok, costUsd: conv.status.cost }),
+    showUsage: usage.showUsage,
   };
 
   const askFlow = useAskFlow({
@@ -85,6 +90,7 @@ export function App() {
 
   useKeyboard((key) => {
     if (key.ctrl && key.name === "c") quit();
+    else if (usageOpen && (key.name === "escape" || key.name === "return" || key.name === "q")) usage.closeUsage();
     else if (composer.fileHints.length && key.name === "tab") composer.acceptMention();
     else if (composer.fileHints.length && (key.name === "up" || key.name === "down")) composer.navigateFiles(key.name);
     else if (composer.fileHints.length && key.name === "escape") composer.dismissFiles();
@@ -140,7 +146,7 @@ export function App() {
       // scrollbox), so we preventDefault to suppress that walk and focus the input instead.
       // Skip while an overlay/answer picker owns focus so we don't yank it away.
       onMouseDown={(e) => {
-        if (overlay || conv.ask) return;
+        if (overlay || conv.ask || usageOpen) return;
         e.preventDefault();
         composer.taRef.current?.focus();
       }}
@@ -152,6 +158,8 @@ export function App() {
         <OtherInput t={t} askQ={askQ} onSubmit={askFlow.submitOther} />
       ) : overlay ? (
         <OverlaySelect t={t} title={overlay.title} options={overlay.options} onSelect={overlay.onSelect} />
+      ) : usageOpen ? (
+        <UsagePanel t={t} usage={usage.usage!} now={Date.now()} />
       ) : (
         <Conversation
           t={t}
@@ -171,7 +179,7 @@ export function App() {
         fileSel={composer.fileSel}
         hints={composer.hints}
         cmdSel={composer.cmdSel}
-        hasOverlay={!!overlay}
+        hasOverlay={!!overlay || usageOpen}
         hasAsk={!!conv.ask}
       />
 
@@ -181,7 +189,7 @@ export function App() {
         t={t}
         busy={conv.busy}
         spin={conv.spin}
-        focused={!overlay && !conv.ask}
+        focused={!overlay && !conv.ask && !usageOpen}
         inputKey={composer.inputKey}
         inputInit={composer.inputInit}
         taRef={composer.taRef}
