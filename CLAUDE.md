@@ -29,19 +29,22 @@ Default to using Bun instead of Node.js.
 **Rule: every change must consider tests.** Whenever you add or modify behavior in
 this repo, stop and ask "can this be covered by a test?" If yes, add or update the
 test in the same change. If the logic is tangled inside a component or side-effecting
-code, extract the pure part into a small module (e.g. `src/queue.ts`) and test that
-rather than skipping tests. Only skip when the change is genuinely untestable (pure
-OpenTUI rendering, throwaway scripts) — and say so explicitly.
+code, extract the pure part into a small module (e.g. `src/domain/queue.ts`) and test
+that rather than skipping tests. Only skip when the change is genuinely untestable
+(pure OpenTUI rendering, throwaway scripts) — and say so explicitly.
 
-Run `bun test` before considering a change done. Tests live next to the code as
-`*.test.ts` (see `src/queue.test.ts`, `src/claude-session.test.ts`). Keep them fast,
-offline, and deterministic — never make real `claude`/network calls from `bun test`.
+Run `bun test` before considering a change done. Tests live under `tests/`, mirroring
+the `src/` layout: `tests/domain/queue.test.ts` covers `src/domain/queue.ts`,
+`tests/session/claude-session.test.ts` covers `src/session/claude-session.ts`, and so
+on. Keep them fast, offline, and deterministic — never make real `claude`/network
+calls from `bun test`.
 
 `scripts/smoke.ts` and `scripts/probe.ts` are the opposite: LIVE harnesses that spawn
 the real CLI and make billed subscription calls (`bun run smoke` / `bun run probe`).
 They're for manual protocol verification, not the test suite. When protocol-parsing
-logic changes, add offline cases to `src/claude-session.test.ts` (feed recorded
-stream-json lines, assert emitted events) rather than relying on the live scripts.
+logic changes, add offline cases to `tests/session/claude-session.test.ts` (feed
+recorded stream-json lines, assert emitted events) rather than relying on the live
+scripts.
 
 ```ts#index.test.ts
 import { test, expect } from "bun:test";

@@ -3,6 +3,8 @@
 // so if we forwarded "/resume" as a user message claude would just answer it in
 // prose. We intercept a leading "/" in the input and act locally instead.
 
+import { fmtTok } from "../lib/format.ts";
+
 export type CommandCtx = {
   /** push a dim SYS line into the conversation */
   print: (text: string) => void;
@@ -29,13 +31,6 @@ export type CommandCtx = {
   /** cumulative token + cost totals for the current session */
   usage: () => { input: number; output: number; costUsd: number };
 };
-
-// compact token count: 950 -> "950", 12300 -> "12.3k", 2_000_000 -> "2.0M"
-function fmtTok(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (n >= 1000) return (n / 1000).toFixed(n >= 100_000 ? 0 : 1) + "k";
-  return String(n);
-}
 
 /** Render session usage totals as the multi-line body of the `/usage` output. Pure so it's testable. */
 export function formatUsage(u: { input: number; output: number; costUsd: number }): string {

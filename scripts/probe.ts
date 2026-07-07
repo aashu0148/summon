@@ -3,7 +3,7 @@
 // protocol shapes like AskUserQuestion / elicitation) headlessly instead of eyeballing
 // the TUI. Run: bun run scripts/probe.ts   (bills the subscription — makes real calls)
 
-import { ClaudeSession, type SessionEvent, type AskQuestion } from "../src/claude-session.ts";
+import { ClaudeSession, type SessionEvent, type AskQuestion } from "../src/session/claude-session.ts";
 
 type Scenario = {
   name: string;

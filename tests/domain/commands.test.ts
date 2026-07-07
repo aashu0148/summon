@@ -8,7 +8,7 @@ import {
   COMMANDS,
   type Command,
   type CommandCtx,
-} from "./commands.ts";
+} from "../../src/domain/commands.ts";
 
 // Minimal command set for deterministic matching tests (independent of the real
 // built-ins, which may grow over time).

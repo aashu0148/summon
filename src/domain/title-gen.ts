@@ -8,12 +8,11 @@
 // generateTitle() is the thin, side-effecting spawn wrapper and isn't tested offline.
 
 import { spawn } from "node:child_process";
+import { oneLine } from "../lib/format.ts";
 
 // The model the CLI uses for the title call. Haiku is cheap and fast; a title is a
 // trivial task, so we don't burn Opus/Sonnet budget on it.
 export const TITLE_MODEL = "claude-haiku-4-5";
-
-const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
 
 // Build the instruction sent to the title model. The opening exchange is quoted as
 // data to LABEL, not a conversation to continue — otherwise the model just echoes

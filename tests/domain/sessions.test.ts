@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { rmSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { listSessions, sessionLabel } from "./sessions.ts";
+import { listSessions, sessionLabel } from "../../src/domain/sessions.ts";
 
 test("sessionLabel prefers the model title over the raw first message", () => {
   expect(sessionLabel({ id: "a", summary: "help me fix the parser thing", mtimeMs: 0 })).toBe(

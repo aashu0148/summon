@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { buildTitlePrompt, sanitizeTitle } from "./title-gen.ts";
+import { buildTitlePrompt, sanitizeTitle } from "../../src/domain/title-gen.ts";
 
 test("buildTitlePrompt includes the opening exchange and the word cap", () => {
   const p = buildTitlePrompt("help me fix the parser", "Sure, which parser?", 5);

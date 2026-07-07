@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { ClaudeSession, fileChangeFromToolUse, type SessionEvent } from "./claude-session.ts";
+import { ClaudeSession, fileChangeFromToolUse, type SessionEvent } from "../../src/session/claude-session.ts";
 
 // These tests exercise the stream-json → SessionEvent parsing OFFLINE — no `claude`
 // binary is spawned and no billed calls are made (that's what scripts/smoke.ts and

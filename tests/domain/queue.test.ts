@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { routeMessage, enqueue, drain, previewLine, formatQueueLine, type QueueItem } from "./queue.ts";
+import { routeMessage, enqueue, drain, previewLine, formatQueueLine, type QueueItem } from "../../src/domain/queue.ts";
 
 const item = (s: string): QueueItem => ({ wire: s, display: s });
 

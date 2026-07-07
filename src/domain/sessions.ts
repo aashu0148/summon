@@ -1,8 +1,8 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { fileChangeFromToolUse } from "./claude-session.ts";
-import { loadTitles, type TitleStore } from "./title-store.ts";
+import { fileChangeFromToolUse } from "../session/claude-session.ts";
+import { loadTitles, type TitleStore } from "../title-store.ts";
 
 // Claude Code stores each session as ~/.claude/projects/<encoded-cwd>/<id>.jsonl,
 // where the cwd is encoded by replacing every "/" with "-".

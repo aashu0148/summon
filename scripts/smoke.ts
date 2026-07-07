@@ -2,7 +2,7 @@
 // call to confirm the end-to-end path works. NOT a unit test (bun test never runs it):
 // it needs auth, the network, and costs money. The offline parsing tests live in
 // src/claude-session.test.ts. Run: bun run smoke
-import { ClaudeSession } from "../src/claude-session.ts";
+import { ClaudeSession } from "../src/session/claude-session.ts";
 const s = new ClaudeSession();
 let deltas = 0, done = "";
 s.on("event", (e) => {

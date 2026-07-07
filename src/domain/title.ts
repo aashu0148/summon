@@ -3,12 +3,12 @@
 // followed by the "chat name" (the first thing the user asked) so multiple open
 // terminals are distinguishable at a glance. Pure string logic, wired in app.tsx.
 
+import { oneLine } from "../lib/format.ts";
+
 export type TitleState = { busy: boolean; label: string };
 
 const RUNNING = "●"; // a turn is in flight
 const IDLE = "✳"; // idle — the claude glyph
-
-const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
 
 // The full title string: "<icon> <name>", never empty.
 export function buildTitle({ busy, label }: TitleState): string {

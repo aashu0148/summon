@@ -1,6 +1,6 @@
 // Live probe for generateTitle — real (billed) subscription calls.
 //   bun run scripts/title-gen-probe.ts
-import { generateTitle } from "../src/title-gen.ts";
+import { generateTitle } from "../src/domain/title-gen.ts";
 
 const cases: [string, string][] = [
   ["Hey I want to refactor, are you up for that?", "Sure — what do you want to refactor?"],

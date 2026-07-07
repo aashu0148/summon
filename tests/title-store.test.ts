@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rmSync, mkdtempSync, writeFileSync } from "node:fs";
-import { withTitle, loadTitles, saveTitle } from "./title-store.ts";
+import { withTitle, loadTitles, saveTitle } from "../src/title-store.ts";
 
 test("withTitle upserts and ignores empty id or title", () => {
   expect(withTitle({}, "s1", "Fix parser")).toEqual({ s1: "Fix parser" });

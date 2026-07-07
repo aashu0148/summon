@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
-import { App } from "./app.tsx";
+import { App } from "./ui/app.tsx";
 
 const renderer = await createCliRenderer({
   // Grab the mouse so the wheel scrolls the conversation scrollbox. Without this

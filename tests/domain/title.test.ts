@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { buildTitle, titleLabel, titleSequence } from "./title.ts";
+import { buildTitle, titleLabel, titleSequence } from "../../src/domain/title.ts";
 
 test("buildTitle shows a dot while busy, the glyph when idle", () => {
   expect(buildTitle({ busy: true, label: "fix the parser" })).toBe("● fix the parser");

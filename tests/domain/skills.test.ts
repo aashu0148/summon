@@ -2,8 +2,8 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadSkills, parseFrontmatter, expandSkill, skillsAsCommands, type Skill } from "./skills.ts";
-import type { CommandCtx } from "./commands.ts";
+import { loadSkills, parseFrontmatter, expandSkill, skillsAsCommands, type Skill } from "../../src/domain/skills.ts";
+import type { CommandCtx } from "../../src/domain/commands.ts";
 
 // Write a SKILL.md at <root>/skills/<slug>/SKILL.md.
 function writeSkill(root: string, slug: string, frontmatter: string, body: string) {
