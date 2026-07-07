@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { matchCommands, completeCommand, type Command } from "../../domain/commands.ts";
-import { listProjectFiles, matchFiles } from "../../domain/files.ts";
+import { listFilesForQuery, matchFiles, splitQueryDir } from "../../domain/files.ts";
 import { MENTION_RE } from "../constants.ts";
 
 /**
@@ -15,7 +15,7 @@ export function useComposer(allCommands: Command[]) {
   const [inputInit, setInputInit] = useState(""); // value to mount the input with
   const historyRef = useRef<string[]>([]); // submitted inputs, oldest→newest
   const histIdxRef = useRef<number | null>(null); // cursor while browsing history (null = live)
-  const filesRef = useRef<string[] | null>(null); // project file list, built lazily on first "@"
+  const filesRef = useRef<Map<string, string[]>>(new Map()); // dir prefix → file list, built lazily per dir
   const [fileHints, setFileHints] = useState<string[]>([]); // @-mention suggestions
   const [fileSel, setFileSel] = useState(0); // highlighted @-mention (↑↓ navigates, Tab/Enter completes)
   const [cmdSel, setCmdSel] = useState(0); // highlighted /command or skill in the hint list
@@ -31,8 +31,14 @@ export function useComposer(allCommands: Command[]) {
     setHintsOff(false); // typing un-dismisses the command hints
     const m = value.match(MENTION_RE);
     if (m) {
-      if (!filesRef.current) filesRef.current = listProjectFiles(process.cwd());
-      setFileHints(matchFiles(filesRef.current, m[1] ?? ""));
+      const query = m[1] ?? "";
+      const { dir } = splitQueryDir(query); // "../" etc. reroots the walk outside the project
+      let list = filesRef.current.get(dir);
+      if (!list) {
+        list = listFilesForQuery(process.cwd(), query);
+        filesRef.current.set(dir, list);
+      }
+      setFileHints(matchFiles(list, query));
       setFileSel(0); // reset highlight to the top match on every keystroke
     } else {
       setFileHints([]);

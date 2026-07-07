@@ -25,7 +25,10 @@ export function Conversation({ t, turns, streaming, thinking, busy, spin, activi
       {turns.length === 0 && !streaming && !thinking ? (
         <text content="Ask anything. Enter to send · /help for commands · Ctrl+C to quit." fg={t.muted} />
       ) : null}
-      {groupTurns(turns).map((group, i) => (
+      {/* Tool-call trace rows ("→ Read src/foo.ts") are hidden for now — they added a lot
+          of bulk to the transcript. The ephemeral "what claude is doing" status line below
+          still covers this. To bring them back, drop the `.filter(...)`. */}
+      {groupTurns(turns.filter((turn) => turn.role !== "tool")).map((group, i) => (
         <box key={i} flexDirection="column" marginTop={i === 0 ? 0 : 1}>
           <text content={LABEL_TEXT[group.role]} fg={labelFg(t, group.role)} />
           {group.texts.map((text, j) =>
