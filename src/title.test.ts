@@ -31,6 +31,6 @@ test("titleLabel truncates long messages with an ellipsis", () => {
   expect(out.endsWith("…")).toBe(true);
 });
 
-test("titleSequence wraps the title in an OSC 0 escape", () => {
-  expect(titleSequence("● hi")).toBe("\x1b]0;● hi\x07");
+test("titleSequence wraps the title in OSC 0 and OSC 2 escapes", () => {
+  expect(titleSequence("● hi")).toBe("\x1b]0;● hi\x07\x1b]2;● hi\x07");
 });

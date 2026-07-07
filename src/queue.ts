@@ -35,3 +35,23 @@ export function previewLine(display: string, max = 72): string {
   const one = display.replace(/\s+/g, " ").trim();
   return one.length > max ? one.slice(0, max) + "…" : one;
 }
+
+// One rendered queue row: a position prefix + the previewed text. `index` is 0-based
+// (0 = next to send). The head item gets a "▸" marker and the "next" tag so it's obvious
+// which message fires when the current turn finishes; the rest are numbered 2, 3, …
+// Numbers are right-aligned to `total`'s width so the previews line up in a column.
+export function formatQueueLine(
+  display: string,
+  index: number,
+  total: number,
+  max = 72,
+): { prefix: string; text: string; head: boolean } {
+  const width = String(total).length;
+  const n = String(index + 1).padStart(width, " ");
+  const head = index === 0;
+  return {
+    prefix: head ? `${n} ▸ ` : `${n}   `,
+    text: previewLine(display, max) + (head ? "   (next)" : ""),
+    head,
+  };
+}

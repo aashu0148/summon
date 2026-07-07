@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { homedir } from "node:os";
 import { useKeyboard, useRenderer } from "@opentui/react";
-import { defaultTextareaKeyBindings } from "@opentui/core";
+import { defaultTextareaKeyBindings, t as styled, fg as fgChunk } from "@opentui/core";
 import { ClaudeSession, type SessionEvent, type Usage, type AskQuestion } from "./claude-session.ts";
 import { THEMES, THEME_NAMES, getTheme, shortModel, type Theme } from "./theme.ts";
 import { loadConfig, saveConfig } from "./config.ts";
-import { COMMANDS, dispatchCommand, matchCommands, completeCommand, type CommandCtx, type Command } from "./commands.ts";
+import { COMMANDS, dispatchCommand, matchCommands, completeCommand, formatCommandHint, type CommandCtx, type Command } from "./commands.ts";
 import { loadSkills, skillsAsCommands } from "./skills.ts";
 import { listSessions, loadTranscript, relativeTime } from "./sessions.ts";
 import { listProjectFiles, matchFiles } from "./files.ts";
-import { routeMessage, enqueue, drain, previewLine, type QueueItem } from "./queue.ts";
+import { routeMessage, enqueue, drain, formatQueueLine, type QueueItem } from "./queue.ts";
 import { buildTitle, titleLabel, titleSequence } from "./title.ts";
+import { generateTitle } from "./title-gen.ts";
 
 type Role = "you" | "claude" | "sys" | "err" | "file";
 type Turn = { role: Role; text: string };
@@ -82,8 +83,8 @@ function fmtTok(n: number): string {
   return String(n);
 }
 
-// Basename of the working dir — the fallback "chat name" for a brand-new, empty session.
-const PROJECT = process.cwd().split("/").filter(Boolean).pop() ?? "summon";
+// Fallback "chat name" for a brand-new, empty session — the app's own name.
+const PROJECT = "summon";
 
 // The dir we're running claude in (fixed for the process). ~-relative, trailing-trimmed.
 const CWD = (() => {
@@ -140,6 +141,8 @@ export function App() {
   const [sessionTok, setSessionTok] = useState({ input: 0, output: 0 });
   const [models, setModels] = useState<string[]>([]);
   const [status, setStatus] = useState({ model: "—", cost: 0, session: "—" });
+  const [genTitle, setGenTitle] = useState(""); // model-named session title (empty until generated)
+  const titleFiredRef = useRef(false); // one-shot guard for the title generation call
   // Skills discovered from .claude/.ai (project + global), read once at startup.
   const [skills] = useState(() => loadSkills());
   // Built-in commands + discovered skills, unified so hints and dispatch see both.
@@ -256,10 +259,22 @@ export function App() {
   // and see at a glance which one is working, like Claude Code's own title. On unmount
   // reset to just the project name so the tab isn't left mid-run.
   useEffect(() => {
-    const label = titleLabel(turns.find((x) => x.role === "you")?.text, PROJECT);
+    const label = genTitle || titleLabel(turns.find((x) => x.role === "you")?.text, PROJECT);
     process.stdout.write(titleSequence(buildTitle({ busy, label })));
-  }, [busy, turns]);
+  }, [busy, turns, genTitle]);
   useEffect(() => () => { process.stdout.write(titleSequence(PROJECT)); }, []);
+
+  // Once the first exchange is on screen, ask a cheap model to name the session so
+  // the tab shows the actual intent, not just the truncated first message. Fired
+  // exactly once (titleFiredRef); the truncated fallback stays until it resolves.
+  useEffect(() => {
+    if (titleFiredRef.current) return;
+    const firstUser = turns.find((x) => x.role === "you")?.text;
+    const firstClaude = turns.find((x) => x.role === "claude")?.text;
+    if (!firstUser || !firstClaude) return;
+    titleFiredRef.current = true;
+    generateTitle(firstUser, firstClaude).then((t) => { if (t) setGenTitle(t); });
+  }, [turns]);
 
   // Drain the queue: once a turn finishes (busy → false), send the next queued
   // message. Sending flips busy back to true, so exactly one drains per turn.
@@ -449,6 +464,7 @@ export function App() {
     quit,
     model: () => shortModel(status.model),
     session: () => status.session,
+    usage: () => ({ input: sessionTok.input, output: sessionTok.output, costUsd: status.cost }),
   };
 
   const onPick = (opt: Opt | null) => {
@@ -559,12 +575,25 @@ export function App() {
       : null;
 
   return (
-    <box flexDirection="column" width="100%" height="100%" backgroundColor={t.bg}>
+    <box
+      flexDirection="column"
+      width="100%"
+      height="100%"
+      backgroundColor={t.bg}
+      // Click anywhere to focus the input — the terminal-standard behavior. The renderer
+      // otherwise autofocuses whatever focusable element sits under the cursor (e.g. the
+      // scrollbox), so we preventDefault to suppress that walk and focus the input instead.
+      // Skip while an overlay/answer picker owns focus so we don't yank it away.
+      onMouseDown={(e) => {
+        if (overlay || ask) return;
+        e.preventDefault();
+        taRef.current?.focus();
+      }}
+    >
       {/* header — single composed line so segments can't overlap */}
       <box backgroundColor={t.panel} paddingLeft={2} border={["bottom"]} borderColor={t.accentDim} flexShrink={0}>
         <text>
           <span fg={t.accent}>▓▒░ SUMMON</span>
-          <span fg={t.muted}>{"  ·  subscription-native claude"}</span>
         </text>
       </box>
 
@@ -647,7 +676,7 @@ export function App() {
 
       {/* @-mention file suggestions — Tab completes the first (▸-marked) one */}
       {fileHints.length && !overlay && !ask ? (
-        <box backgroundColor={t.bg} paddingLeft={3} flexDirection="column">
+        <box backgroundColor={t.bg} paddingLeft={3} flexDirection="column" flexShrink={0}>
           {fileHints.map((f, i) => (
             <text key={f} content={(i === fileSel ? "▸ " : "  ") + "@" + f} fg={i === fileSel ? t.accent : t.muted} />
           ))}
@@ -655,24 +684,36 @@ export function App() {
         </box>
       ) : hints.length && !overlay ? (
         /* /command · skill suggestions — ▸ marks the highlighted one */
-        <box backgroundColor={t.bg} paddingLeft={3} flexDirection="column">
-          {hints.map((c, i) => (
-            <text key={c.name} fg={i === cmdSel ? t.accent : t.muted}>
-              <span>{(i === cmdSel ? "▸ " : "  ") + "/" + c.name}</span>
-              {c.description ? <span fg={t.accentDim}>{"  " + c.description.slice(0, 60)}</span> : null}
-            </text>
-          ))}
+        <box backgroundColor={t.bg} paddingLeft={3} flexDirection="column" flexShrink={0}>
+          {hints.map((c, i) => {
+            // One StyledText node per line — a single `content` child. Mapping a
+            // `<text>` with multiple `<span>` children corrupts the render (adjacent
+            // rows get zipped/dropped), so we build the two-tone line as chunks.
+            const { label, desc } = formatCommandHint(c, i === cmdSel);
+            return (
+              <text
+                key={c.name}
+                content={styled`${fgChunk(i === cmdSel ? t.accent : t.muted)(label)}${fgChunk(t.accentDim)(desc)}`}
+              />
+            );
+          })}
           <text content="  ↑↓ to choose · Tab/Enter to complete · Esc to dismiss" fg={t.accentDim} />
         </box>
       ) : null}
 
       {/* queued messages — typed while Claude was busy, sent one-by-one as turns finish */}
       {queue.length ? (
-        <box backgroundColor={t.bg} paddingLeft={3} flexDirection="column">
-          <text content={`⋮ queued (${queue.length}) — sends when the current turn finishes`} fg={t.accentDim} />
-          {queue.map((q, i) => (
-            <text key={i} content={"  " + previewLine(q.display)} fg={t.muted} />
-          ))}
+        <box backgroundColor={t.bg} paddingLeft={3} flexDirection="column" flexShrink={0}>
+          <text content={`⋮ queued (${queue.length}) — sent in order as each turn finishes`} fg={t.accentDim} />
+          {queue.map((q, i) => {
+            const row = formatQueueLine(q.display, i, queue.length);
+            return (
+              <text
+                key={i}
+                content={styled`${fgChunk(row.head ? t.accent : t.accentDim)(row.prefix)}${fgChunk(row.head ? t.ink : t.muted)(row.text)}`}
+              />
+            );
+          })}
         </box>
       ) : null}
 

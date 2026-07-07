@@ -2,7 +2,10 @@ import { test, expect, describe } from "bun:test";
 import {
   matchCommands,
   completeCommand,
+  formatCommandHint,
   dispatchCommand,
+  formatUsage,
+  COMMANDS,
   type Command,
   type CommandCtx,
 } from "./commands.ts";
@@ -33,8 +36,30 @@ function stubCtx(): CommandCtx & { prints: string[]; prompts: { wire: string; di
     quit: () => {},
     model: () => "opus",
     session: () => "abcd",
+    usage: () => ({ input: 0, output: 0, costUsd: 0 }),
   };
 }
+
+describe("formatCommandHint", () => {
+  test("marks the selected row with ▸ and pads the description", () => {
+    expect(formatCommandHint(CMDS[0]!, true)).toEqual({ label: "▸ /design", desc: "  d" });
+    expect(formatCommandHint(CMDS[0]!, false)).toEqual({ label: "  /design", desc: "  d" });
+  });
+
+  test("empty description → empty desc segment (no stray padding)", () => {
+    expect(formatCommandHint({ name: "quit", description: "", run: () => {} }, false)).toEqual({
+      label: "  /quit",
+      desc: "",
+    });
+  });
+
+  test("truncates long descriptions to 60 chars", () => {
+    const long = "x".repeat(80);
+    expect(formatCommandHint({ name: "z", description: long, run: () => {} }, false).desc).toBe(
+      "  " + "x".repeat(60),
+    );
+  });
+});
 
 describe("matchCommands", () => {
   test("no leading slash → no hints", () => {
@@ -69,6 +94,31 @@ describe("completeCommand", () => {
 
   test("re-completing an exact token is idempotent (adds the committing space)", () => {
     expect(completeCommand("/design", "design")).toBe("/design ");
+  });
+});
+
+describe("formatUsage", () => {
+  test("renders totals with compact tokens and 4-decimal cost", () => {
+    const out = formatUsage({ input: 12300, output: 950, costUsd: 0.1234 });
+    expect(out).toContain("input tokens    12.3k");
+    expect(out).toContain("output tokens   950");
+    expect(out).toContain("est. cost       ~$0.1234");
+  });
+});
+
+describe("/usage command", () => {
+  test("prints the session usage totals via ctx.usage()", () => {
+    const ctx = stubCtx();
+    ctx.usage = () => ({ input: 2000, output: 500, costUsd: 0.05 });
+    expect(dispatchCommand("/usage", ctx, COMMANDS)).toBe(true);
+    expect(ctx.prints[0]).toContain("usage this session:");
+    expect(ctx.prints[0]).toContain("2.0k");
+  });
+
+  test("/cost is an alias for /usage", () => {
+    const ctx = stubCtx();
+    expect(dispatchCommand("/cost", ctx, COMMANDS)).toBe(true);
+    expect(ctx.prints[0]).toContain("usage this session:");
   });
 });
 

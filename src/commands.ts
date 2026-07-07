@@ -26,7 +26,26 @@ export type CommandCtx = {
   model: () => string;
   /** current session id */
   session: () => string;
+  /** cumulative token + cost totals for the current session */
+  usage: () => { input: number; output: number; costUsd: number };
 };
+
+// compact token count: 950 -> "950", 12300 -> "12.3k", 2_000_000 -> "2.0M"
+function fmtTok(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1000) return (n / 1000).toFixed(n >= 100_000 ? 0 : 1) + "k";
+  return String(n);
+}
+
+/** Render session usage totals as the multi-line body of the `/usage` output. Pure so it's testable. */
+export function formatUsage(u: { input: number; output: number; costUsd: number }): string {
+  return [
+    "usage this session:",
+    `  input tokens    ${fmtTok(u.input)}`,
+    `  output tokens   ${fmtTok(u.output)}`,
+    `  est. cost       ~$${u.costUsd.toFixed(4)}`,
+  ].join("\n");
+}
 
 export type Command = {
   name: string;
@@ -92,6 +111,12 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: "usage",
+    aliases: ["cost"],
+    description: "show token usage and cost for this session",
+    run: (_args, ctx) => ctx.print(formatUsage(ctx.usage())),
+  },
+  {
     name: "quit",
     aliases: ["exit", "q"],
     description: "quit summon",
@@ -121,6 +146,18 @@ export function completeCommand(draft: string, name: string): string {
   const m = /^\/\S*(.*)$/.exec(draft);
   const rest = m?.[1] ?? "";
   return "/" + name + (rest.length ? rest : " ");
+}
+
+/**
+ * Format a command for the `/`-hint menu: the `▸`/space marker + `/name`, and the
+ * description (padded with two leading spaces, truncated to 60). Pure so the render
+ * layer just paints the two segments in different colors.
+ */
+export function formatCommandHint(c: Command, selected: boolean): { label: string; desc: string } {
+  return {
+    label: (selected ? "▸ " : "  ") + "/" + c.name,
+    desc: c.description ? "  " + c.description.slice(0, 60) : "",
+  };
 }
 
 function indexByName(commands: Command[]): Map<string, Command> {

@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { routeMessage, enqueue, drain, previewLine, type QueueItem } from "./queue.ts";
+import { routeMessage, enqueue, drain, previewLine, formatQueueLine, type QueueItem } from "./queue.ts";
 
 const item = (s: string): QueueItem => ({ wire: s, display: s });
 
@@ -67,5 +67,27 @@ describe("previewLine", () => {
   });
   test("leaves short strings intact", () => {
     expect(previewLine("short")).toBe("short");
+  });
+});
+
+describe("formatQueueLine", () => {
+  test("head (index 0) gets the ▸ marker and a (next) tag", () => {
+    const row = formatQueueLine("first", 0, 3);
+    expect(row.head).toBe(true);
+    expect(row.prefix).toBe("1 ▸ ");
+    expect(row.text).toBe("first   (next)");
+  });
+  test("non-head rows are numbered and plain", () => {
+    const row = formatQueueLine("second", 1, 3);
+    expect(row.head).toBe(false);
+    expect(row.prefix).toBe("2   ");
+    expect(row.text).toBe("second");
+  });
+  test("numbers are right-aligned to the total's width so previews line up", () => {
+    expect(formatQueueLine("a", 0, 12).prefix).toBe(" 1 ▸ ");
+    expect(formatQueueLine("j", 9, 12).prefix).toBe("10   ");
+  });
+  test("previews the display text (collapse + truncate)", () => {
+    expect(formatQueueLine("x".repeat(80), 1, 2, 10).text).toBe("xxxxxxxxxx…");
   });
 });

@@ -23,6 +23,12 @@ export function titleLabel(firstUserMessage: string | undefined, fallback: strin
   return base.length > max ? base.slice(0, max - 1) + "…" : base;
 }
 
-// OSC 0 escape — sets both the window and icon title. Writing it to a TTY updates
-// the terminal tab; on a non-TTY it's harmless bytes.
-export const titleSequence = (title: string) => `\x1b]0;${title}\x07`;
+// OSC escapes that set the terminal title. Writing them to a TTY updates the tab;
+// on a non-TTY they're harmless bytes.
+//
+// We emit OSC 0 (window + icon title) *and* OSC 2 (window title). Real terminals
+// treat OSC 0 as enough, but VS Code's integrated terminal (xterm.js) only captures
+// the sequence into its `${sequence}` variable — it shows in the tab only when
+// `terminal.integrated.tabs.title` includes `${sequence}` (see README/settings).
+// Emitting both maximizes the chance the host picks it up.
+export const titleSequence = (title: string) => `\x1b]0;${title}\x07\x1b]2;${title}\x07`;
