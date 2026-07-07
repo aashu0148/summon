@@ -23,3 +23,10 @@ export function markdownStyleSpec(t: Theme): Record<string, StyleDefinitionInput
     "markup.link": { fg: t.muted }, // surrounding "(", ")" glyphs
   };
 }
+
+// Block-level markdown tokens whose content has an intrinsic width and must NOT soft-wrap
+// (tables, fenced code). These get their own horizontal scroll box so wide content can be
+// scrolled sideways instead of clipped; prose (everything else) keeps wrapping to width.
+export function isOverflowBlock(tokenType: string): boolean {
+  return tokenType === "table" || tokenType === "code";
+}

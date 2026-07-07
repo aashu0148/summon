@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { markdownStyleSpec } from "../../src/ui/markdown-theme.ts";
+import { markdownStyleSpec, isOverflowBlock } from "../../src/ui/markdown-theme.ts";
 import { amber, navy } from "../../src/ui/theme.ts";
 
 test("maps core markdown scopes to theme colors", () => {
@@ -35,5 +35,13 @@ test("registers every scope the markdown renderer emits", () => {
     "markup.link.url",
   ]) {
     expect(spec[scope]).toBeDefined();
+  }
+});
+
+test("only tables and code get their own horizontal scroll box", () => {
+  expect(isOverflowBlock("table")).toBe(true);
+  expect(isOverflowBlock("code")).toBe(true); // fenced code
+  for (const t of ["paragraph", "heading", "list", "blockquote", "hr", "text"]) {
+    expect(isOverflowBlock(t)).toBe(false); // prose wraps to width, no scroll box
   }
 });

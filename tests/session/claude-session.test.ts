@@ -105,6 +105,19 @@ describe("line parsing", () => {
     feed(frame);
     feed(frame); // repeated frame — must NOT emit a second file_change
     expect(only(events, "file_change")).toEqual([{ type: "file_change", path: "z.ts", added: 2, removed: 0 }]);
+    expect(only(events, "tool")).toEqual([]); // mutating tool → file_change only, no tool row
+  });
+
+  test("assistant tool_use emits a tool event for non-mutating tools (with target)", () => {
+    const { events, feed } = harness();
+    const frame = {
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "tu_2", name: "Read", input: { file_path: "src/a.ts" } }] },
+    };
+    feed(frame);
+    feed(frame); // repeated frame — deduped by id
+    expect(only(events, "tool")).toEqual([{ type: "tool", name: "Read", detail: "src/a.ts" }]);
+    expect(only(events, "file_change")).toEqual([]);
   });
 
   test("rate_limit_event → rate_limit", () => {
@@ -137,10 +150,10 @@ describe("line parsing", () => {
 });
 
 describe("control requests", () => {
-  test("can_use_tool for a normal tool auto-approves → tool event", () => {
+  test("can_use_tool for a normal tool auto-approves silently (activity comes from the assistant frame)", () => {
     const { events, feed } = harness();
     feed({ type: "control_request", request_id: "r1", request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "ls" } } });
-    expect(only(events, "tool")).toEqual([{ type: "tool", name: "Bash", detail: "ls" }]);
+    expect(only(events, "tool")).toEqual([]);
     expect(only(events, "ask")).toEqual([]);
   });
 

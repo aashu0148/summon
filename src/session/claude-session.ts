@@ -186,7 +186,12 @@ export class ClaudeSession extends EventEmitter {
         if (b?.type === "tool_use" && b.id && !this.seenToolUse.has(b.id)) {
           this.seenToolUse.add(b.id);
           const fc = fileChangeFromToolUse(b.name, b.input);
+          // Mutating tools get the richer "✎ path +N −M" file_change row; every other
+          // tool (Read/Bash/Grep/…) surfaces as a `tool` event so the user can see what
+          // Claude is doing. This is the reliable source — in the default auto-permission
+          // mode the CLI just runs tools without ever sending a can_use_tool request.
           if (fc) this.emit("event", { type: "file_change", ...fc });
+          else this.emit("event", { type: "tool", name: b.name, detail: toolTarget(b.name, b.input) });
         }
       }
       // The completed assistant frame carries the message's authoritative usage — fold it
@@ -284,8 +289,9 @@ export class ClaudeSession extends EventEmitter {
       }
       // Every other tool: auto-approve — permission policy is the underlying claude's
       // job (it runs in --permission-mode auto by default), not ours. We never prompt.
+      // The `tool` activity event is emitted from the assistant frame's tool_use blocks
+      // (the reliable path), not here — this request usually doesn't even fire in auto mode.
       this.writeControlResponse(rid, { behavior: "allow", updatedInput: req.input ?? {} });
-      this.emit("event", { type: "tool", name: tool, detail: toolTarget(tool, req.input) });
       return;
     }
     if (sub === "initialize") return; // no response required
