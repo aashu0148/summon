@@ -7,11 +7,12 @@ import { THEMES, THEME_NAMES, getTheme, shortModel, type Theme } from "./theme.t
 import { loadConfig, saveConfig } from "./config.ts";
 import { COMMANDS, dispatchCommand, matchCommands, completeCommand, formatCommandHint, type CommandCtx, type Command } from "./commands.ts";
 import { loadSkills, skillsAsCommands } from "./skills.ts";
-import { listSessions, loadTranscript, relativeTime } from "./sessions.ts";
+import { listSessions, loadTranscript, relativeTime, sessionLabel } from "./sessions.ts";
 import { listProjectFiles, matchFiles } from "./files.ts";
 import { routeMessage, enqueue, drain, formatQueueLine, type QueueItem } from "./queue.ts";
 import { buildTitle, titleLabel, titleSequence } from "./title.ts";
 import { generateTitle } from "./title-gen.ts";
+import { saveTitle } from "./title-store.ts";
 
 type Role = "you" | "claude" | "sys" | "err" | "file";
 type Turn = { role: Role; text: string };
@@ -143,6 +144,7 @@ export function App() {
   const [status, setStatus] = useState({ model: "—", cost: 0, session: "—" });
   const [genTitle, setGenTitle] = useState(""); // model-named session title (empty until generated)
   const titleFiredRef = useRef(false); // one-shot guard for the title generation call
+  const sessionIdRef = useRef(""); // full id of the live session, for persisting its title
   // Skills discovered from .claude/.ai (project + global), read once at startup.
   const [skills] = useState(() => loadSkills());
   // Built-in commands + discovered skills, unified so hints and dispatch see both.
@@ -152,6 +154,7 @@ export function App() {
   const onEvent = useCallback((e: SessionEvent) => {
     switch (e.type) {
       case "init":
+        sessionIdRef.current = e.sessionId;
         setStatus((p) => ({ ...p, model: e.model, session: e.sessionId.slice(0, 8) }));
         break;
       case "delta":
@@ -229,6 +232,9 @@ export function App() {
     setLive(ZERO);
     setActivity("");
     setQueue([]); // fresh session — drop anything queued against the old one
+    setGenTitle(""); // fresh session — regenerate the tab title from its first exchange
+    titleFiredRef.current = false;
+    sessionIdRef.current = ""; // init event fills this in for the new session
     const s = new ClaudeSession();
     s.on("event", onEvent);
     sessionRef.current = s;
@@ -273,7 +279,12 @@ export function App() {
     const firstClaude = turns.find((x) => x.role === "claude")?.text;
     if (!firstUser || !firstClaude) return;
     titleFiredRef.current = true;
-    generateTitle(firstUser, firstClaude).then((t) => { if (t) setGenTitle(t); });
+    const sid = sessionIdRef.current;
+    generateTitle(firstUser, firstClaude).then((t) => {
+      if (!t) return;
+      setGenTitle(t);
+      saveTitle(sid, t); // persist so /resume shows this name, not the raw first message
+    });
   }, [turns]);
 
   // Drain the queue: once a turn finishes (busy → false), send the next queued
@@ -420,7 +431,7 @@ export function App() {
     }
     const now = Date.now();
     const options: Opt[] = listSessions(process.cwd()).map((s) => ({
-      name: (s.summary || "(no preview)").slice(0, 64),
+      name: (sessionLabel(s) || "(no preview)").slice(0, 64),
       description: `${s.id.slice(0, 8)} · ${relativeTime(s.mtimeMs, now)}`,
       value: s.id,
     }));

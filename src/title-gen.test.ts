@@ -3,7 +3,7 @@ import { buildTitlePrompt, sanitizeTitle } from "./title-gen.ts";
 
 test("buildTitlePrompt includes the opening exchange and the word cap", () => {
   const p = buildTitlePrompt("help me fix the parser", "Sure, which parser?", 5);
-  expect(p).toContain("at most 5 words");
+  expect(p).toContain("5-word-max");
   expect(p).toContain("User: help me fix the parser");
   expect(p).toContain("Assistant: Sure, which parser?");
 });

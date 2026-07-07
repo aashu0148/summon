@@ -2,15 +2,22 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { fileChangeFromToolUse } from "./claude-session.ts";
+import { loadTitles, type TitleStore } from "./title-store.ts";
 
 // Claude Code stores each session as ~/.claude/projects/<encoded-cwd>/<id>.jsonl,
 // where the cwd is encoded by replacing every "/" with "-".
 
 export type SessionMeta = {
   id: string;
-  summary: string; // first real user message, for the picker label
+  summary: string; // first real user message, the fallback picker label
+  title?: string; // model-generated title (title-gen.ts), preferred in the picker
   mtimeMs: number;
 };
+
+/** Best label for a session: the model title if we have one, else the first message. */
+export function sessionLabel(m: SessionMeta): string {
+  return m.title || m.summary || "";
+}
 
 // A reconstructed conversation entry for replaying a resumed session into the UI.
 export type TranscriptTurn = { role: "you" | "claude" | "file"; text: string };
@@ -50,7 +57,7 @@ function firstUserText(file: string): string {
 }
 
 /** Recent sessions for `cwd`, most-recent first (capped at `limit`). */
-export function listSessions(cwd: string, limit = 20): SessionMeta[] {
+export function listSessions(cwd: string, limit = 20, titles: TitleStore = loadTitles()): SessionMeta[] {
   const dir = projectDir(cwd);
   let files: string[];
   try {
@@ -67,7 +74,8 @@ export function listSessions(cwd: string, limit = 20): SessionMeta[] {
     } catch {
       continue;
     }
-    metas.push({ id: f.replace(/\.jsonl$/, ""), summary: firstUserText(full), mtimeMs });
+    const id = f.replace(/\.jsonl$/, "");
+    metas.push({ id, summary: firstUserText(full), title: titles[id], mtimeMs });
   }
   metas.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return metas.slice(0, limit);
