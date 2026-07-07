@@ -20,6 +20,8 @@ export type CommandCtx = {
   openPicker: (kind: "resume" | "model" | "theme") => void;
   /** quit the app */
   quit: () => void;
+  /** forward a synthesized prompt to claude; `display` overrides what shows in the transcript */
+  sendPrompt: (text: string, display?: string) => void;
   /** current model string (already shortened) */
   model: () => string;
   /** current session id */
@@ -97,21 +99,50 @@ export const COMMANDS: Command[] = [
   },
 ];
 
-const byName = new Map<string, Command>();
-for (const c of COMMANDS) {
-  byName.set(c.name, c);
-  for (const a of c.aliases ?? []) byName.set(a, c);
+/**
+ * Suggestions for a `/`-draft. Returns [] when there's no leading slash or once
+ * the command is "committed" — i.e. a space already follows the token ("/name "),
+ * meaning the user is typing args and the menu should get out of the way (this is
+ * what lets a second Enter actually run it, mirroring the @-mention picker).
+ */
+export function matchCommands(commands: Command[], draft: string, limit = 8): Command[] {
+  if (!draft.startsWith("/")) return [];
+  if (/^\/\S+\s/.test(draft)) return []; // committed → no menu
+  const tok = draft.split(/\s+/)[0] ?? "";
+  return commands.filter((c) => ("/" + c.name).startsWith(tok)).slice(0, limit);
+}
+
+/**
+ * Complete the leading `/token` of `draft` to `/name`, preserving any args after
+ * the first space. When there are no args a trailing space is added so the token
+ * is "committed" and the next Enter runs it.
+ */
+export function completeCommand(draft: string, name: string): string {
+  const m = /^\/\S*(.*)$/.exec(draft);
+  const rest = m?.[1] ?? "";
+  return "/" + name + (rest.length ? rest : " ");
+}
+
+function indexByName(commands: Command[]): Map<string, Command> {
+  const m = new Map<string, Command>();
+  for (const c of commands) {
+    m.set(c.name, c);
+    for (const a of c.aliases ?? []) m.set(a, c);
+  }
+  return m;
 }
 
 /**
  * If `input` is a slash command, run it and return true (do NOT forward to
- * claude). Otherwise return false. Unknown commands print a local error.
+ * claude verbatim). Otherwise return false. `commands` defaults to the built-in
+ * set; callers pass built-ins + discovered skills so both are dispatchable.
+ * Unknown commands print a local error.
  */
-export function dispatchCommand(input: string, ctx: CommandCtx): boolean {
+export function dispatchCommand(input: string, ctx: CommandCtx, commands: Command[] = COMMANDS): boolean {
   if (!input.startsWith("/")) return false;
   const [rawName, ...rest] = input.slice(1).trim().split(/\s+/);
   const name = (rawName ?? "").toLowerCase();
-  const cmd = byName.get(name);
+  const cmd = indexByName(commands).get(name);
   if (!cmd) {
     ctx.print(`unknown command: /${name}  ·  try /help`);
     return true;

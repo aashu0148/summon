@@ -10,6 +10,7 @@
   },
   "scripts": {
     "start": "bun run src/index.tsx",
+    "test": "bun test",
     "smoke": "bun run scripts/smoke.ts",
     "probe": "bun run scripts/probe.ts"
   },

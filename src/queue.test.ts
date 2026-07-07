@@ -1,0 +1,71 @@
+import { test, expect, describe } from "bun:test";
+import { routeMessage, enqueue, drain, previewLine, type QueueItem } from "./queue.ts";
+
+const item = (s: string): QueueItem => ({ wire: s, display: s });
+
+describe("routeMessage", () => {
+  test("sends immediately when not busy", () => {
+    expect(routeMessage(false, item("hi"))).toEqual({ action: "send", item: item("hi") });
+  });
+  test("queues when busy", () => {
+    expect(routeMessage(true, item("hi"))).toEqual({ action: "queue", item: item("hi") });
+  });
+  test("passes the item through unchanged (preserves wire/display split)", () => {
+    const it = { wire: "/skill big prompt", display: "/skill" };
+    expect(routeMessage(true, it).item).toBe(it);
+  });
+});
+
+describe("enqueue", () => {
+  test("appends to the tail (FIFO order)", () => {
+    const q = enqueue(enqueue([], item("a")), item("b"));
+    expect(q.map((i) => i.wire)).toEqual(["a", "b"]);
+  });
+  test("does not mutate the input array", () => {
+    const q0: QueueItem[] = [];
+    enqueue(q0, item("a"));
+    expect(q0).toEqual([]);
+  });
+});
+
+describe("drain", () => {
+  test("returns null while busy", () => {
+    expect(drain(true, [item("a")])).toBeNull();
+  });
+  test("returns null when the queue is empty", () => {
+    expect(drain(false, [])).toBeNull();
+  });
+  test("pulls the head and returns the rest", () => {
+    const d = drain(false, [item("a"), item("b"), item("c")]);
+    expect(d?.next.wire).toBe("a");
+    expect(d?.rest.map((i) => i.wire)).toEqual(["b", "c"]);
+  });
+  test("does not mutate the input queue", () => {
+    const q = [item("a"), item("b")];
+    drain(false, q);
+    expect(q.map((i) => i.wire)).toEqual(["a", "b"]);
+  });
+  test("draining repeatedly preserves FIFO", () => {
+    let q = [item("a"), item("b"), item("c")];
+    const sent: string[] = [];
+    let d = drain(false, q);
+    while (d) {
+      sent.push(d.next.wire);
+      q = d.rest;
+      d = drain(false, q); // simulates a turn finishing each time (busy=false)
+    }
+    expect(sent).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("previewLine", () => {
+  test("collapses internal whitespace and trims", () => {
+    expect(previewLine("  hello   there\nworld ")).toBe("hello there world");
+  });
+  test("truncates with an ellipsis past the cap", () => {
+    expect(previewLine("x".repeat(80), 10)).toBe("xxxxxxxxxx…");
+  });
+  test("leaves short strings intact", () => {
+    expect(previewLine("short")).toBe("short");
+  });
+});

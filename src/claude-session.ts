@@ -69,9 +69,25 @@ export type SessionEvent =
   | { type: "error"; message: string }
   | { type: "exit"; code: number | null };
 
+const ZERO_USAGE: Usage = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
+const addUsage = (a: Usage, b: Usage): Usage => ({
+  input: a.input + b.input,
+  output: a.output + b.output,
+  cacheRead: a.cacheRead + b.cacheRead,
+  cacheCreate: a.cacheCreate + b.cacheCreate,
+});
+
 export class ClaudeSession extends EventEmitter {
   private proc: ChildProcess | null = null;
   private seenToolUse = new Set<string>(); // dedupe file_change across repeated assistant frames
+  // Live token accounting for the current turn. A single turn produces MANY assistant
+  // messages once tools are involved, and each `message_start` restarts output_tokens at
+  // ~1 while `message_delta` reports only output_tokens (input absent). Emitting those raw
+  // made the HUD counter collapse to 0 and climb again on every message. Instead we keep a
+  // running total: `committed` = sum of finished messages this turn, `msg` = the in-flight
+  // one; the emitted usage is always committed+msg, so it only ever grows within a turn.
+  private committed: Usage = { ...ZERO_USAGE };
+  private msg: Usage = { ...ZERO_USAGE };
 
   override emit(event: "event", e: SessionEvent): boolean {
     return super.emit(event, e);
@@ -139,12 +155,24 @@ export class ClaudeSession extends EventEmitter {
           if (fc) this.emit("event", { type: "file_change", ...fc });
         }
       }
-      this.emitUsage(json.message?.usage);
+      // The completed assistant frame carries the message's authoritative usage — fold it
+      // into the in-flight message (max per field) so the running total is accurate.
+      if (json.message?.usage) {
+        const u = this.readUsage(json.message.usage);
+        this.msg = {
+          input: Math.max(u.input, this.msg.input),
+          output: Math.max(u.output, this.msg.output),
+          cacheRead: Math.max(u.cacheRead, this.msg.cacheRead),
+          cacheCreate: Math.max(u.cacheCreate, this.msg.cacheCreate),
+        };
+        this.emitCumulative();
+      }
     } else if (t === "rate_limit_event") {
       const info = json.rate_limit_info ?? {};
       this.emit("event", { type: "rate_limit", kind: info.rateLimitType ?? "?", status: info.status ?? "?" });
     } else if (t === "result") {
       const usage = this.readUsage(json.usage);
+      this.resetTurnUsage(); // turn over — next turn's live counter starts clean
       this.emit("event", { type: "result", costUsd: json.total_cost_usd ?? 0, ms: json.duration_ms ?? 0, text: json.result ?? "", usage });
       if (json.is_error || (json.subtype && json.subtype !== "success") || (json.errors?.length)) {
         const msg = (json.errors ?? []).join("; ") || json.subtype || "turn ended with an error";
@@ -166,10 +194,33 @@ export class ClaudeSession extends EventEmitter {
       if (ev.delta?.type === "text_delta") this.emit("event", { type: "delta", text: ev.delta.text ?? "" });
       else if (ev.delta?.type === "thinking_delta") this.emit("event", { type: "thinking", text: ev.delta.thinking ?? "" });
     } else if (ev.type === "message_start") {
-      this.emitUsage(ev.message?.usage);
+      // A new assistant message begins: bank the finished one, then seed the new one.
+      this.committed = addUsage(this.committed, this.msg);
+      this.msg = this.readUsage(ev.message?.usage);
+      this.emitCumulative();
     } else if (ev.type === "message_delta") {
-      this.emitUsage(ev.usage);
+      // Progress for the in-flight message. Deltas usually carry only output_tokens, so
+      // take the max per-field (never regress input/cache to 0 on a sparse delta).
+      const u = this.readUsage(ev.usage);
+      this.msg = {
+        input: Math.max(u.input, this.msg.input),
+        output: Math.max(u.output, this.msg.output),
+        cacheRead: Math.max(u.cacheRead, this.msg.cacheRead),
+        cacheCreate: Math.max(u.cacheCreate, this.msg.cacheCreate),
+      };
+      this.emitCumulative();
     }
+  }
+
+  /** Emit the running turn total (finished messages + the in-flight one) for the live HUD. */
+  private emitCumulative(): void {
+    this.emit("event", { type: "usage", usage: addUsage(this.committed, this.msg) });
+  }
+
+  /** Reset per-turn token accounting. Called when a new turn starts (send) or ends (result). */
+  private resetTurnUsage(): void {
+    this.committed = { ...ZERO_USAGE };
+    this.msg = { ...ZERO_USAGE };
   }
 
   private readUsage(u: any): Usage {
@@ -179,11 +230,6 @@ export class ClaudeSession extends EventEmitter {
       cacheRead: u?.cache_read_input_tokens ?? 0,
       cacheCreate: u?.cache_creation_input_tokens ?? 0,
     };
-  }
-
-  private emitUsage(u: any): void {
-    if (!u) return;
-    this.emit("event", { type: "usage", usage: this.readUsage(u) });
   }
 
   private handleControlRequest(json: any): void {
@@ -246,6 +292,7 @@ export class ClaudeSession extends EventEmitter {
   }
 
   send(text: string): void {
+    this.resetTurnUsage(); // new turn — start the live token counter from zero
     this.writeLine({ type: "user", message: { role: "user", content: [{ type: "text", text }] } });
   }
 

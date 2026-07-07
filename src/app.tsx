@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { homedir } from "node:os";
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { defaultTextareaKeyBindings } from "@opentui/core";
 import { ClaudeSession, type SessionEvent, type Usage, type AskQuestion } from "./claude-session.ts";
 import { THEMES, THEME_NAMES, getTheme, shortModel, type Theme } from "./theme.ts";
 import { loadConfig, saveConfig } from "./config.ts";
-import { COMMANDS, dispatchCommand, type CommandCtx } from "./commands.ts";
+import { COMMANDS, dispatchCommand, matchCommands, completeCommand, type CommandCtx, type Command } from "./commands.ts";
+import { loadSkills, skillsAsCommands } from "./skills.ts";
 import { listSessions, loadTranscript, relativeTime } from "./sessions.ts";
 import { listProjectFiles, matchFiles } from "./files.ts";
+import { routeMessage, enqueue, drain, previewLine, type QueueItem } from "./queue.ts";
+import { buildTitle, titleLabel, titleSequence } from "./title.ts";
 
 type Role = "you" | "claude" | "sys" | "err" | "file";
 type Turn = { role: Role; text: string };
@@ -27,6 +30,26 @@ type Picker = { kind: "resume" | "model" | "theme"; title: string; options: Opt[
 type Ask = { requestId: string; questions: AskQuestion[] };
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+// Human-readable "what Claude is doing right now" label for a tool. Shown as an ephemeral
+// status while a tool runs so the user isn't left staring at a bare "thinking…" during
+// tool use (Read/Bash/Grep/… emit no delta or thinking text, only a `tool` event).
+const TOOL_VERB: Record<string, string> = {
+  Bash: "running a command",
+  Read: "reading a file",
+  Write: "writing a file",
+  Edit: "editing a file",
+  MultiEdit: "editing a file",
+  NotebookEdit: "editing a notebook",
+  Grep: "searching the code",
+  Glob: "finding files",
+  LS: "listing files",
+  WebFetch: "fetching a page",
+  WebSearch: "searching the web",
+  Task: "running a subagent",
+  TodoWrite: "planning",
+};
+const toolActivity = (name: string) => TOOL_VERB[name] ?? `running ${name}`;
 
 // Trailing @-mention token being typed, e.g. "look at @src/ap" → captures "src/ap".
 const MENTION_RE = /(?:^|\s)@([^\s]*)$/;
@@ -59,6 +82,9 @@ function fmtTok(n: number): string {
   return String(n);
 }
 
+// Basename of the working dir — the fallback "chat name" for a brand-new, empty session.
+const PROJECT = process.cwd().split("/").filter(Boolean).pop() ?? "summon";
+
 // The dir we're running claude in (fixed for the process). ~-relative, trailing-trimmed.
 const CWD = (() => {
   const home = homedir();
@@ -77,15 +103,20 @@ export function App() {
   const accRef = useRef(""); // streaming answer buffer, flushed on a timer
   const thinkRef = useRef(""); // streaming thinking buffer
   const usageRef = useRef<Usage>(ZERO); // live turn usage
+  const activityRef = useRef(""); // ephemeral "what claude is doing" (current tool)
   const dirtyRef = useRef(false);
   const thinkDirtyRef = useRef(false);
   const usageDirtyRef = useRef(false);
+  const activityDirtyRef = useRef(false);
   const modelRef = useRef<string | undefined>(undefined); // last chosen model, kept across /new
 
   const [turns, setTurns] = useState<Turn[]>([]);
   const [streaming, setStreaming] = useState("");
   const [thinking, setThinking] = useState("");
   const [busy, setBusy] = useState(false);
+  // Messages typed (or skill prompts) while busy, sent FIFO as turns free up. `wire`
+  // is what claude receives; `display` is the (possibly shorter) transcript label.
+  const [queue, setQueue] = useState<QueueItem[]>([]);
   const [tick, setTick] = useState(0);
   const [draft, setDraft] = useState("");
   const [inputKey, setInputKey] = useState(0); // bump to remount (clear/recall) the input
@@ -95,6 +126,8 @@ export function App() {
   const filesRef = useRef<string[] | null>(null); // project file list, built lazily on first "@"
   const [fileHints, setFileHints] = useState<string[]>([]); // @-mention suggestions
   const [fileSel, setFileSel] = useState(0); // highlighted @-mention (↑↓ navigates, Tab/Enter completes)
+  const [cmdSel, setCmdSel] = useState(0); // highlighted /command or skill in the hint list
+  const [hintsOff, setHintsOff] = useState(false); // Esc dismisses the command hints until the next keystroke
   const draftRef = useRef(""); // latest draft, for key handlers
   const taRef = useRef<any>(null); // the input textarea renderable (read .plainText)
   const [picker, setPicker] = useState<Picker | null>(null);
@@ -103,9 +136,14 @@ export function App() {
   const [otherMode, setOtherMode] = useState(false); // typing a custom "Other" answer
   const askAnsRef = useRef<{ header: string; label: string }[]>([]);
   const [live, setLive] = useState<Usage>(ZERO); // current-turn token counts
+  const [activity, setActivity] = useState(""); // ephemeral status label (current tool)
   const [sessionTok, setSessionTok] = useState({ input: 0, output: 0 });
   const [models, setModels] = useState<string[]>([]);
   const [status, setStatus] = useState({ model: "—", cost: 0, session: "—" });
+  // Skills discovered from .claude/.ai (project + global), read once at startup.
+  const [skills] = useState(() => loadSkills());
+  // Built-in commands + discovered skills, unified so hints and dispatch see both.
+  const allCommands = useMemo(() => [...COMMANDS, ...skillsAsCommands(skills)], [skills]);
 
   // Stable event handler — reads/writes only refs + stable setState fns.
   const onEvent = useCallback((e: SessionEvent) => {
@@ -116,10 +154,17 @@ export function App() {
       case "delta":
         accRef.current += e.text;
         dirtyRef.current = true;
+        // Claude resumed writing — the prior tool label is stale, drop it.
+        if (activityRef.current) { activityRef.current = ""; activityDirtyRef.current = true; }
         break;
       case "thinking":
         thinkRef.current += e.text;
         thinkDirtyRef.current = true;
+        if (activityRef.current) { activityRef.current = ""; activityDirtyRef.current = true; }
+        break;
+      case "tool":
+        activityRef.current = toolActivity(e.name);
+        activityDirtyRef.current = true;
         break;
       case "usage":
         usageRef.current = e.usage;
@@ -138,7 +183,9 @@ export function App() {
         setStatus((p) => ({ ...p, cost: e.costUsd }));
         setSessionTok((p) => ({ input: p.input + e.usage.input, output: p.output + e.usage.output }));
         usageRef.current = ZERO;
+        activityRef.current = "";
         setLive(ZERO);
+        setActivity("");
         setBusy(false);
         break;
       case "available_models":
@@ -172,10 +219,13 @@ export function App() {
     accRef.current = "";
     thinkRef.current = "";
     usageRef.current = ZERO;
-    dirtyRef.current = thinkDirtyRef.current = usageDirtyRef.current = false;
+    activityRef.current = "";
+    dirtyRef.current = thinkDirtyRef.current = usageDirtyRef.current = activityDirtyRef.current = false;
     setStreaming("");
     setThinking("");
     setLive(ZERO);
+    setActivity("");
+    setQueue([]); // fresh session — drop anything queued against the old one
     const s = new ClaudeSession();
     s.on("event", onEvent);
     sessionRef.current = s;
@@ -196,9 +246,29 @@ export function App() {
       if (dirtyRef.current) { setStreaming(accRef.current); dirtyRef.current = false; }
       if (thinkDirtyRef.current) { setThinking(thinkRef.current); thinkDirtyRef.current = false; }
       if (usageDirtyRef.current) { setLive(usageRef.current); usageDirtyRef.current = false; }
+      if (activityDirtyRef.current) { setActivity(activityRef.current); activityDirtyRef.current = false; }
     }, 60);
     return () => clearInterval(id);
   }, [busy]);
+
+  // Terminal tab title — a filled dot while a turn runs, a glyph when idle, plus the
+  // chat name (first thing the user asked). Lets you tell open Summon terminals apart
+  // and see at a glance which one is working, like Claude Code's own title. On unmount
+  // reset to just the project name so the tab isn't left mid-run.
+  useEffect(() => {
+    const label = titleLabel(turns.find((x) => x.role === "you")?.text, PROJECT);
+    process.stdout.write(titleSequence(buildTitle({ busy, label })));
+  }, [busy, turns]);
+  useEffect(() => () => { process.stdout.write(titleSequence(PROJECT)); }, []);
+
+  // Drain the queue: once a turn finishes (busy → false), send the next queued
+  // message. Sending flips busy back to true, so exactly one drains per turn.
+  useEffect(() => {
+    const d = drain(busy, queue);
+    if (!d) return;
+    setQueue(d.rest);
+    sendNow(d.next.wire, d.next.display);
+  }, [busy, queue]);
 
   const quit = useCallback(() => {
     sessionRef.current?.kill();
@@ -210,6 +280,8 @@ export function App() {
   const onDraft = (value: string) => {
     setDraft(value);
     draftRef.current = value;
+    setCmdSel(0); // reset the /command highlight to the top match on every keystroke
+    setHintsOff(false); // typing un-dismisses the command hints
     const m = value.match(MENTION_RE);
     if (m) {
       if (!filesRef.current) filesRef.current = listProjectFiles(process.cwd());
@@ -236,6 +308,19 @@ export function App() {
     setFileHints([]);
   };
 
+  // Tab/Enter completes the /token to the highlighted command or skill and drops it
+  // into the input (with a trailing space) — it does NOT send. The next Enter runs it.
+  const acceptCommand = (cmds: Command[]) => {
+    const cmd = cmds[cmdSel] ?? cmds[0];
+    if (!cmd) return;
+    const next = completeCommand(draftRef.current, cmd.name);
+    setDraft(next);
+    draftRef.current = next;
+    setInputInit(next);
+    setInputKey((k) => k + 1);
+    setCmdSel(0);
+  };
+
   // Esc while busy: abort the current turn. Flush whatever streamed so far into a
   // turn so the partial answer isn't lost, then hand control back to the user. The
   // CLI's follow-up `result` event just no-ops (busy already false).
@@ -246,12 +331,18 @@ export function App() {
     if (partial) setTurns((p) => [...p, { role: "claude", text: partial }]);
     accRef.current = "";
     thinkRef.current = "";
-    dirtyRef.current = thinkDirtyRef.current = false;
+    activityRef.current = "";
+    dirtyRef.current = thinkDirtyRef.current = activityDirtyRef.current = false;
     setStreaming("");
     setThinking("");
+    setActivity("");
     setBusy(false);
     pushSys("interrupted — turn stopped.");
   };
+
+  // Command/skill suggestions for the current draft (also used by the keyboard handler
+  // and submit, so it's computed here rather than only in the render body).
+  const hints = hintsOff ? [] : matchCommands(allCommands, draft);
 
   useKeyboard((key) => {
     if (key.ctrl && key.name === "c") quit();
@@ -262,6 +353,13 @@ export function App() {
       setFileSel((s) => (key.name === "up" ? (s - 1 + n) % n : (s + 1) % n));
     }
     else if (fileHints.length && key.name === "escape") setFileHints([]);
+    else if (hints.length && key.name === "tab") acceptCommand(hints);
+    else if (hints.length && (key.name === "up" || key.name === "down")) {
+      // Navigate the /command · skill menu; wraps top↔bottom like the @-picker.
+      const n = hints.length;
+      setCmdSel((s) => (key.name === "up" ? (s - 1 + n) % n : (s + 1) % n));
+    }
+    else if (hints.length && key.name === "escape") setHintsOff(true);
     else if (key.name === "escape") {
       if (ask && otherMode) setOtherMode(false); // back to the options
       else if (ask) { sessionRef.current?.answerQuestion(ask.requestId, "The user dismissed the question without selecting."); setAsk(null); }
@@ -317,6 +415,13 @@ export function App() {
 
   const ctx: CommandCtx = {
     print: pushSys,
+    // Skills forward a synthesized prompt. Route through the same queue as typed
+    // input so it respects an in-flight turn; `display` keeps the transcript short.
+    sendPrompt: (wire, display = wire) => {
+      const r = routeMessage(busy, { wire, display });
+      if (r.action === "queue") { setQueue((q) => enqueue(q, r.item)); return; }
+      sendNow(wire, display);
+    },
     clear: () => setTurns([]),
     newSession: () => { setTurns([]); setSessionTok({ input: 0, output: 0 }); pushSys("started a fresh session."); startSession(); },
     resume: (id) => {
@@ -392,6 +497,13 @@ export function App() {
     // Enter with the @-mention picker open completes the highlighted file instead
     // of sending — matches the Tab behavior and keeps a single submit path.
     if (fileHints.length && MENTION_RE.test(draftRef.current)) { acceptMention(); return; }
+    // Enter with the /command menu open completes the highlighted entry into the
+    // input (not send) — unless the typed token already IS that command, in which
+    // case fall through and run it. Second Enter after completion always runs.
+    if (hints.length) {
+      const cmd = hints[cmdSel] ?? hints[0];
+      if (cmd && "/" + cmd.name !== value.trim().split(/\s+/)[0]) { acceptCommand(hints); return; }
+    }
     const text = value.trim();
     setDraft("");
     draftRef.current = "";
@@ -402,25 +514,32 @@ export function App() {
     if (!text) return;
     const h = historyRef.current;
     if (h[h.length - 1] !== text) h.push(text); // record for ↑/↓ recall (skip dupes)
-    if (dispatchCommand(text, ctx)) return; // slash command — never forwarded
-    if (busy) { pushSys("still working — wait for the current turn to finish."); return; }
-    setTurns((p) => [...p, { role: "you", text }]);
+    if (dispatchCommand(text, ctx, allCommands)) return; // slash command or skill — not forwarded verbatim
+    // Busy: queue it. The drain effect sends the next message when the turn frees up.
+    const r = routeMessage(busy, { wire: text, display: text });
+    if (r.action === "queue") { setQueue((q) => enqueue(q, r.item)); return; }
+    sendNow(text);
+  };
+
+  // Actually hand a message to the running session and mark the turn busy. `wire`
+  // goes to claude; `display` (defaults to wire) is the transcript label.
+  const sendNow = (wire: string, display = wire) => {
+    setTurns((p) => [...p, { role: "you", text: display }]);
     accRef.current = "";
     thinkRef.current = "";
     usageRef.current = ZERO;
+    activityRef.current = "";
     setStreaming("");
     setThinking("");
     setLive(ZERO);
+    setActivity("");
     setBusy(true);
-    sessionRef.current?.send(text);
+    sessionRef.current?.send(wire);
   };
 
   const spin = SPINNER[tick % SPINNER.length];
   const model = shortModel(status.model);
   const hud = `↑${fmtTok(live.input)} ↓${fmtTok(live.output)}`;
-  const hints = draft.startsWith("/")
-    ? COMMANDS.filter((c) => ("/" + c.name).startsWith(draft.split(/\s+/)[0] ?? "")).slice(0, 5)
-    : [];
   const askQ = ask?.questions[askIdx];
   const overlay = ask && askQ && !otherMode
     ? {
@@ -511,12 +630,18 @@ export function App() {
               <text content="CLAUDE" fg={t.accent} />
               <text content={streaming + "▌"} fg={t.ink} />
             </box>
-          ) : busy && !thinking ? (
-            <box marginTop={turns.length ? 1 : 0}>
-              <text content={`${spin} thinking…  · Esc to interrupt`} fg={t.accentDim} />
+          ) : null}
+          {/* one always-on status line while busy — spinner + what claude is doing right
+              now (current tool, else responding/thinking) + live tokens + how to stop.
+              Keeps the user out of the dark even when there's no thinking/answer text. */}
+          {busy ? (
+            <box marginTop={turns.length || thinking || streaming ? 1 : 0}>
+              <text
+                content={`${spin} ${streaming ? "responding…" : activity || "thinking…"}  ·  ${hud}  ·  Esc to interrupt`}
+                fg={t.accentDim}
+              />
             </box>
           ) : null}
-          {busy ? <text content={`  ${hud}`} fg={t.accentDim} /> : null}
         </scrollbox>
       )}
 
@@ -529,13 +654,25 @@ export function App() {
           <text content="  ↑↓ to choose · Tab/Enter to complete · Esc to dismiss" fg={t.accentDim} />
         </box>
       ) : hints.length && !overlay ? (
-        /* command hints */
-        <box backgroundColor={t.bg} paddingLeft={3}>
-          <text>
-            {hints.map((c, i) => (
-              <span key={c.name} fg={t.accentDim}>{(i ? "   " : "") + "/" + c.name}</span>
-            ))}
-          </text>
+        /* /command · skill suggestions — ▸ marks the highlighted one */
+        <box backgroundColor={t.bg} paddingLeft={3} flexDirection="column">
+          {hints.map((c, i) => (
+            <text key={c.name} fg={i === cmdSel ? t.accent : t.muted}>
+              <span>{(i === cmdSel ? "▸ " : "  ") + "/" + c.name}</span>
+              {c.description ? <span fg={t.accentDim}>{"  " + c.description.slice(0, 60)}</span> : null}
+            </text>
+          ))}
+          <text content="  ↑↓ to choose · Tab/Enter to complete · Esc to dismiss" fg={t.accentDim} />
+        </box>
+      ) : null}
+
+      {/* queued messages — typed while Claude was busy, sent one-by-one as turns finish */}
+      {queue.length ? (
+        <box backgroundColor={t.bg} paddingLeft={3} flexDirection="column">
+          <text content={`⋮ queued (${queue.length}) — sends when the current turn finishes`} fg={t.accentDim} />
+          {queue.map((q, i) => (
+            <text key={i} content={"  " + previewLine(q.display)} fg={t.muted} />
+          ))}
         </box>
       ) : null}
 
