@@ -2,9 +2,12 @@ import { homedir } from "node:os";
 import { defaultTextareaKeyBindings } from "@opentui/core";
 import type { Usage, AskQuestion } from "../session/claude-session.ts";
 import type { Theme } from "./theme.ts";
+import type { FileEdit } from "../domain/file-edits.ts";
 
 export type Role = "you" | "claude" | "sys" | "err" | "file" | "tool";
-export type Turn = { role: Role; text: string };
+// `file` rows carry their accumulated edit so a following same-file edit can fold into
+// them (see foldFileEdit) rather than re-parsing the counts back out of `text`.
+export type Turn = { role: Role; text: string; file?: FileEdit };
 export type Opt = { name: string; description: string; value: string };
 export type Picker = { kind: "resume" | "model" | "theme"; title: string; options: Opt[] };
 export type Ask = { requestId: string; questions: AskQuestion[] };

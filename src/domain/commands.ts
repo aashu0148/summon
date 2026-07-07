@@ -177,20 +177,60 @@ function indexByName(commands: Command[]): Map<string, Command> {
 }
 
 /**
+ * Find a KNOWN command token appearing mid-message (i.e. not at the very start).
+ * A token is `/name` sitting on a whitespace/start boundary so we don't mistake
+ * URLs or paths ("http://x", "a/b") for commands. Only tokens that resolve to a
+ * real command match — unknown "/foo" mid-message is left alone as prose. The
+ * remaining text (everything before and after the token) becomes the args, so
+ * "make a landing page /design" runs /design with "make a landing page".
+ * Exported for tests.
+ */
+export function findInlineCommand(
+  input: string,
+  index: Map<string, Command>,
+): { cmd: Command; args: string } | null {
+  const re = /(^|\s)\/([A-Za-z0-9_-]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(input))) {
+    const name = (m[2] ?? "").toLowerCase();
+    const cmd = index.get(name);
+    if (!cmd) continue;
+    const tokenStart = m.index + (m[1] ?? "").length; // position of "/"
+    const tokenEnd = tokenStart + 1 + (m[2] ?? "").length;
+    const before = input.slice(0, tokenStart).trim();
+    const after = input.slice(tokenEnd).trim();
+    const args = [before, after].filter(Boolean).join(" ");
+    return { cmd, args };
+  }
+  return null;
+}
+
+/**
  * If `input` is a slash command, run it and return true (do NOT forward to
  * claude verbatim). Otherwise return false. `commands` defaults to the built-in
  * set; callers pass built-ins + discovered skills so both are dispatchable.
- * Unknown commands print a local error.
+ *
+ * A leading "/token" is authoritative: an unknown one prints a local error. A
+ * command appearing mid-message only fires if it's a KNOWN command (built-in or
+ * discovered skill); the rest of the message becomes its args. Unknown slashes
+ * mid-message are ordinary text and pass through to claude.
  */
 export function dispatchCommand(input: string, ctx: CommandCtx, commands: Command[] = COMMANDS): boolean {
-  if (!input.startsWith("/")) return false;
-  const [rawName, ...rest] = input.slice(1).trim().split(/\s+/);
-  const name = (rawName ?? "").toLowerCase();
-  const cmd = indexByName(commands).get(name);
-  if (!cmd) {
-    ctx.print(`unknown command: /${name}  ·  try /help`);
+  const index = indexByName(commands);
+  const trimmed = input.trim();
+  if (trimmed.startsWith("/")) {
+    const [rawName, ...rest] = trimmed.slice(1).split(/\s+/);
+    const name = (rawName ?? "").toLowerCase();
+    const cmd = index.get(name);
+    if (!cmd) {
+      ctx.print(`unknown command: /${name}  ·  try /help`);
+      return true;
+    }
+    cmd.run(rest.join(" "), ctx);
     return true;
   }
-  cmd.run(rest.join(" "), ctx);
+  const inline = findInlineCommand(trimmed, index);
+  if (!inline) return false;
+  inline.cmd.run(inline.args, ctx);
   return true;
 }

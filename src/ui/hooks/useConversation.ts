@@ -6,6 +6,7 @@ import { buildTitle, titleLabel, titleSequence } from "../../domain/title.ts";
 import { generateTitle } from "../../domain/title-gen.ts";
 import { saveTitle } from "../../title-store.ts";
 import { SPINNER, ZERO, PROJECT, toolActivity, toolLine, type Turn, type Ask } from "../constants.ts";
+import { relPath, fileTurnText, foldFileEdit } from "../../domain/file-edits.ts";
 
 // File-mutating tools already get a nicer "EDIT ✎ path +N −M" row via the file_change
 // event, so we don't also add a plain TOOL trace row for them (would double up).
@@ -123,8 +124,17 @@ export function useConversation() {
         if (e.models.length) setModels(e.models);
         break;
       case "file_change": {
-        const rel = e.path.startsWith(process.cwd() + "/") ? e.path.slice(process.cwd().length + 1) : e.path;
-        setTurns((p) => [...p, { role: "file", text: `✎ ${rel}  +${e.added} −${e.removed}` }]);
+        const edit = { rel: relPath(e.path, process.cwd()), added: e.added, removed: e.removed };
+        setTurns((p) => {
+          // Fold into the previous row when it's an edit to the same file, so a run of
+          // edits to one file stays a single updating entry instead of piling up rows.
+          const last = p[p.length - 1];
+          const merged = last?.role === "file" ? foldFileEdit(last.file, edit) : null;
+          const row: Turn = merged
+            ? { role: "file", text: fileTurnText(merged), file: merged }
+            : { role: "file", text: fileTurnText(edit), file: edit };
+          return merged ? [...p.slice(0, -1), row] : [...p, row];
+        });
         break;
       }
       case "ask":

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { fileChangeFromToolUse, toolTarget } from "../session/claude-session.ts";
 import { loadTitles, type TitleStore } from "../title-store.ts";
+import { relPath, fileTurnText, foldFileEdit, type FileEdit } from "./file-edits.ts";
 
 // Claude Code stores each session as ~/.claude/projects/<encoded-cwd>/<id>.jsonl,
 // where the cwd is encoded by replacing every "/" with "-".
@@ -19,8 +20,9 @@ export function sessionLabel(m: SessionMeta): string {
   return m.title || m.summary || "";
 }
 
-// A reconstructed conversation entry for replaying a resumed session into the UI.
-export type TranscriptTurn = { role: "you" | "claude" | "file" | "tool"; text: string };
+// A reconstructed conversation entry for replaying a resumed session into the UI. `file`
+// rows carry their accumulated edit so consecutive same-file edits fold into one row.
+export type TranscriptTurn = { role: "you" | "claude" | "file" | "tool"; text: string; file?: FileEdit };
 
 function projectDir(cwd: string): string {
   return join(homedir(), ".claude", "projects", cwd.replace(/\//g, "-"));
@@ -120,8 +122,11 @@ export function loadTranscript(sessionId: string, cwd: string): TranscriptTurn[]
         else if (b?.type === "tool_use") {
           const fc = fileChangeFromToolUse(b.name, b.input);
           if (fc) {
-            const rel = fc.path.startsWith(cwd + "/") ? fc.path.slice(cwd.length + 1) : fc.path;
-            turns.push({ role: "file", text: `✎ ${rel}  +${fc.added} −${fc.removed}` });
+            const edit = { rel: relPath(fc.path, cwd), added: fc.added, removed: fc.removed };
+            const last = turns[turns.length - 1];
+            const merged = last?.role === "file" ? foldFileEdit(last.file, edit) : null;
+            if (merged) turns[turns.length - 1] = { role: "file", text: fileTurnText(merged), file: merged };
+            else turns.push({ role: "file", text: fileTurnText(edit), file: edit });
           } else {
             // Non-mutating tool (Read/Bash/Grep/…): replay it as the same "→ Tool target"
             // trace the live view shows, so a resumed chat isn't missing that history.

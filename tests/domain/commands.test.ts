@@ -160,4 +160,32 @@ describe("dispatchCommand", () => {
     dispatchCommand("/CLEAR", ctx, cmds);
     expect(ran).toBe(true);
   });
+
+  test("a known command mid-message fires with the rest as args", () => {
+    let ran: string | null = null;
+    const cmds: Command[] = [{ name: "design", description: "", run: (args) => { ran = args; } }];
+    const ctx = stubCtx();
+    expect(dispatchCommand("make me a landing page /design", ctx, cmds)).toBe(true);
+    expect(ran).toBe("make me a landing page");
+  });
+
+  test("args before and after a mid-message command are joined", () => {
+    let ran: string | null = null;
+    const cmds: Command[] = [{ name: "design", description: "", run: (args) => { ran = args; } }];
+    const ctx = stubCtx();
+    dispatchCommand("build /design a dark theme", ctx, cmds);
+    expect(ran).toBe("build a dark theme");
+  });
+
+  test("an unknown slash mid-message is left as prose (not intercepted)", () => {
+    const ctx = stubCtx();
+    expect(dispatchCommand("see http://example.com/design for ideas", ctx, CMDS)).toBe(false);
+    expect(ctx.prints.length).toBe(0);
+  });
+
+  test("a URL path is not mistaken for a command (needs a boundary)", () => {
+    const ctx = stubCtx();
+    // "/design" here sits inside a path, preceded by a letter not whitespace → no match.
+    expect(dispatchCommand("open src/ui/design in the editor", ctx, CMDS)).toBe(false);
+  });
 });
