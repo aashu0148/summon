@@ -3,8 +3,10 @@
 // held here and sent FIFO as each turn frees up.
 //
 // `wire` is the text claude actually receives; `display` is the (possibly shorter)
-// label shown in the transcript / queue preview.
-export type QueueItem = { wire: string; display: string };
+// label shown in the transcript / queue preview; `images` are any pasted image blocks
+// sent alongside the text (carried through untouched — the queue logic is text-only).
+import type { ImageBlock } from "./content.ts";
+export type QueueItem = { wire: string; display: string; images?: ImageBlock[] };
 
 // Where should an outgoing message go right now? If a turn is in flight it must
 // wait its turn; otherwise it sends immediately.

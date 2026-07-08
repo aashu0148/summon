@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import { buildUserContent, type ImageBlock } from "../domain/content.ts";
 
 /**
  * Minimal "summoner core", distilled from Code Quest's ProcessRunner +
@@ -331,9 +332,11 @@ export class ClaudeSession extends EventEmitter {
     this.writeLine({ type: "control_response", response: { subtype: "success", request_id: requestId, response: inner } });
   }
 
-  send(text: string): void {
+  send(text: string, images: ImageBlock[] = []): void {
+    const content = buildUserContent(text, images);
+    if (!content.length) return; // nothing to send (empty text, no images)
     this.resetTurnUsage(); // new turn — start the live token counter from zero
-    this.writeLine({ type: "user", message: { role: "user", content: [{ type: "text", text }] } });
+    this.writeLine({ type: "user", message: { role: "user", content } });
   }
 
   private writeLine(obj: unknown): void {

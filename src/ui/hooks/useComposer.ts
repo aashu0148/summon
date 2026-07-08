@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { matchCommands, completeCommand, type Command } from "../../domain/commands.ts";
 import { listFilesForQuery, matchFiles, splitQueryDir } from "../../domain/files.ts";
+import { imageMarker, type ImageAttachment } from "../../domain/content.ts";
 import { MENTION_RE } from "../constants.ts";
 
 /**
@@ -22,6 +23,8 @@ export function useComposer(allCommands: Command[]) {
   const [hintsOff, setHintsOff] = useState(false); // Esc dismisses the command hints until the next keystroke
   const draftRef = useRef(""); // latest draft, for key handlers
   const taRef = useRef<any>(null); // the input textarea renderable (read .plainText)
+  const [attachments, setAttachments] = useState<ImageAttachment[]>([]); // pasted images, sent on submit
+  const attachSeq = useRef(0); // per-message image counter → "[Image #N]"
 
   // Track the draft and recompute @-mention suggestions on every keystroke.
   const onDraft = (value: string) => {
@@ -44,6 +47,21 @@ export function useComposer(allCommands: Command[]) {
       setFileHints([]);
     }
   };
+
+  // A pasted image: assign the next "[Image #N]" id, remember it for submit, and splice
+  // the marker into the draft so the user sees it inline (same remount trick as mentions).
+  const addAttachment = (att: Omit<ImageAttachment, "id">) => {
+    const id = (attachSeq.current += 1);
+    setAttachments((a) => [...a, { ...att, id }]);
+    const cur = draftRef.current;
+    const next = (cur && !cur.endsWith(" ") ? cur + " " : cur) + imageMarker(id) + " ";
+    setDraft(next);
+    draftRef.current = next;
+    setInputInit(next);
+    setInputKey((k) => k + 1);
+  };
+
+  const clearAttachments = () => { setAttachments([]); attachSeq.current = 0; };
 
   // Tab/Enter completes the trailing @token to the highlighted file suggestion.
   const acceptMention = () => {
@@ -119,6 +137,7 @@ export function useComposer(allCommands: Command[]) {
     setInputInit("");
     setInputKey((k) => k + 1); // remount input → clears it
     histIdxRef.current = null; // back to a live line
+    clearAttachments(); // drop pending images — they went out with this message
   };
 
   // Record a submitted input for ↑/↓ recall (skipping consecutive dupes).
@@ -132,8 +151,8 @@ export function useComposer(allCommands: Command[]) {
   const hints = hintsOff ? [] : matchCommands(allCommands, draft);
 
   return {
-    draft, draftRef, hints, fileHints, fileSel, cmdSel, inputKey, inputInit, taRef,
+    draft, draftRef, hints, fileHints, fileSel, cmdSel, inputKey, inputInit, taRef, attachments,
     onDraft, acceptMention, acceptCommand, navigateFiles, navigateHints,
-    dismissFiles, dismissHints, recall, clearForSubmit, recordHistory,
+    dismissFiles, dismissHints, recall, clearForSubmit, recordHistory, addAttachment,
   };
 }

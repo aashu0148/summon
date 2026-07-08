@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { useKeyboard, useRenderer } from "@opentui/react";
+import { useKeyboard, usePaste, useRenderer } from "@opentui/react";
+import { decodePasteBytes } from "@opentui/core";
 import { THEMES, THEME_NAMES, getTheme, shortModel, type Theme } from "./theme.ts";
 import { loadConfig, saveConfig } from "../config.ts";
 import { COMMANDS, dispatchCommand, type CommandCtx } from "../domain/commands.ts";
@@ -19,7 +20,10 @@ import { HintsPanel } from "./components/HintsPanel.tsx";
 import { UsagePanel } from "./components/UsagePanel.tsx";
 import { QueuePanel } from "./components/QueuePanel.tsx";
 import { InputBar } from "./components/InputBar.tsx";
+import { AttachmentsPanel } from "./components/AttachmentsPanel.tsx";
 import { StatusBar } from "./components/StatusBar.tsx";
+import { readClipboardImage } from "../domain/clipboard.ts";
+import { toImageBlock } from "../domain/content.ts";
 
 export function App() {
   const renderer = useRenderer();
@@ -88,8 +92,23 @@ export function App() {
     pushSys: conv.pushSys,
   });
 
+  // Pull an image off the OS clipboard and attach it (no-op if there isn't one). Shared
+  // by the Ctrl+V binding and the empty-paste path — real terminals don't deliver image
+  // bytes on Cmd+V, so we read the clipboard directly like Claude Code does.
+  const attachClipboardImage = () => {
+    if (overlay || conv.ask || usageOpen) return;
+    void readClipboardImage().then((img) => { if (img) composer.addAttachment(img); });
+  };
+
+  // Bracketed paste. Empty/whitespace text usually means an image sits on the clipboard
+  // (Cmd+V), so try to attach it; real text pastes fall through to the textarea untouched.
+  usePaste((e) => {
+    if (!decodePasteBytes(e.bytes).trim()) attachClipboardImage();
+  });
+
   useKeyboard((key) => {
     if (key.ctrl && key.name === "c") quit();
+    else if (key.ctrl && key.name === "v") attachClipboardImage();
     else if (usageOpen && (key.name === "escape" || key.name === "return" || key.name === "q")) usage.closeUsage();
     else if (composer.fileHints.length && key.name === "tab") composer.acceptMention();
     else if (composer.fileHints.length && (key.name === "up" || key.name === "down")) composer.navigateFiles(key.name);
@@ -121,12 +140,13 @@ export function App() {
       if (cmd && "/" + cmd.name !== value.trim().split(/\s+/)[0]) { composer.acceptCommand(composer.hints); return; }
     }
     const text = value.trim();
+    const images = composer.attachments.map(toImageBlock); // capture before clear wipes them
     composer.clearForSubmit();
-    if (!text) return;
-    composer.recordHistory(text);
-    if (dispatchCommand(text, ctx, allCommands)) return; // slash command or skill — not forwarded verbatim
+    if (!text && !images.length) return;
+    if (text) composer.recordHistory(text);
+    if (text && dispatchCommand(text, ctx, allCommands)) return; // slash command or skill — not forwarded verbatim
     // Busy: queue it; the drain effect sends the next message when the turn frees up.
-    conv.enqueueOrSend(text, text);
+    conv.enqueueOrSend(text, text, images.length ? images : undefined);
   };
 
   const model = shortModel(conv.status.model);
@@ -184,6 +204,8 @@ export function App() {
       />
 
       <QueuePanel t={t} queue={conv.queue} />
+
+      <AttachmentsPanel t={t} attachments={composer.attachments} />
 
       <InputBar
         t={t}

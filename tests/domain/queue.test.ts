@@ -45,6 +45,12 @@ describe("drain", () => {
     drain(false, q);
     expect(q.map((i) => i.wire)).toEqual(["a", "b"]);
   });
+  test("carries image blocks through enqueue → drain untouched", () => {
+    const images = [{ type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } }] as const;
+    const q = enqueue([], { wire: "look", display: "look [Image #1]", images: [...images] });
+    const d = drain(false, q);
+    expect(d?.next.images).toEqual([...images]);
+  });
   test("draining repeatedly preserves FIFO", () => {
     let q = [item("a"), item("b"), item("c")];
     const sent: string[] = [];

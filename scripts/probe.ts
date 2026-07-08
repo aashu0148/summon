@@ -4,10 +4,16 @@
 // the TUI. Run: bun run scripts/probe.ts   (bills the subscription — makes real calls)
 
 import { ClaudeSession, type SessionEvent, type AskQuestion } from "../src/session/claude-session.ts";
+import type { ImageBlock } from "../src/domain/content.ts";
+
+// A valid 8x8 solid-red PNG (base64), for verifying the CLI accepts image content blocks.
+const RED_PNG_8x8 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC";
 
 type Scenario = {
   name: string;
   prompt: string;
+  images?: ImageBlock[]; // sent as image content blocks alongside the prompt
   spawn?: { model?: string };
   preSend?: (s: ClaudeSession) => void; // runs right after spawn, before the prompt
   answer?: (q: AskQuestion) => string; // for AskUserQuestion: what to answer (default: first option)
@@ -24,6 +30,11 @@ const SCENARIOS: Scenario[] = [
   { name: "typeable 'Other' answer", prompt: "Use the AskUserQuestion tool to ask my favorite color with options Red, Blue, Green. After I answer, repeat my exact answer back in one sentence.", answer: () => "Chartreuse (typed via Other)" },
   { name: "runtime model switch", prompt: "Say your model family in one word.", preSend: (s) => s.setModel("claude-sonnet-4-6") },
   { name: "forced error (bad model)", prompt: "hi", spawn: { model: "totally-not-a-real-model-xyz" } },
+  {
+    name: "image content block",
+    prompt: "What single color fills this image? Reply with just the color name.",
+    images: [{ type: "image", source: { type: "base64", media_type: "image/png", data: RED_PNG_8x8 } }],
+  },
 ];
 
 function runScenario(sc: Scenario): Promise<void> {
@@ -79,7 +90,7 @@ function runScenario(sc: Scenario): Promise<void> {
     });
     s.spawn(sc.spawn ?? {});
     sc.preSend?.(s);
-    s.send(sc.prompt); // send immediately — init only fires after the first message
+    s.send(sc.prompt, sc.images ?? []); // send immediately — init only fires after the first message
   });
 }
 

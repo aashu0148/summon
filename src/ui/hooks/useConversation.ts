@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ClaudeSession, type SessionEvent, type Usage } from "../../session/claude-session.ts";
 import { listSessions, loadTranscript } from "../../domain/sessions.ts";
 import { routeMessage, enqueue, drain, type QueueItem } from "../../domain/queue.ts";
+import type { ImageBlock } from "../../domain/content.ts";
 import { buildTitle, titleLabel, titleSequence } from "../../domain/title.ts";
 import { generateTitle } from "../../domain/title-gen.ts";
 import { saveTitle } from "../../title-store.ts";
@@ -224,7 +225,7 @@ export function useConversation() {
 
   // Actually hand a message to the running session and mark the turn busy. `wire`
   // goes to claude; `display` (defaults to wire) is the transcript label.
-  const sendNow = (wire: string, display = wire) => {
+  const sendNow = (wire: string, display = wire, images?: ImageBlock[]) => {
     setTurns((p) => [...p, { role: "you", text: display }]);
     accRef.current = "";
     thinkRef.current = "";
@@ -235,7 +236,7 @@ export function useConversation() {
     setLive(ZERO);
     setActivity("");
     setBusy(true);
-    sessionRef.current?.send(wire);
+    sessionRef.current?.send(wire, images);
   };
 
   // Drain the queue: once a turn finishes (busy → false), send the next queued
@@ -244,15 +245,15 @@ export function useConversation() {
     const d = drain(busy, queue);
     if (!d) return;
     setQueue(d.rest);
-    sendNow(d.next.wire, d.next.display);
+    sendNow(d.next.wire, d.next.display, d.next.images);
   }, [busy, queue]);
 
   // Route an outgoing message: if a turn is in flight it queues (drained later),
   // otherwise it sends immediately. Shared by typed input and skill prompts.
-  const enqueueOrSend = (wire: string, display = wire) => {
-    const r = routeMessage(busy, { wire, display });
+  const enqueueOrSend = (wire: string, display = wire, images?: ImageBlock[]) => {
+    const r = routeMessage(busy, { wire, display, images });
     if (r.action === "queue") { setQueue((q) => enqueue(q, r.item)); return; }
-    sendNow(wire, display);
+    sendNow(wire, display, images);
   };
 
   // Esc while busy: abort the current turn. Flush whatever streamed so far into a
