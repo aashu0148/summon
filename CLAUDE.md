@@ -4,6 +4,15 @@ globs: "*.ts, *.tsx, *.html, *.css, *.js, *.jsx, package.json"
 alwaysApply: false
 ---
 
+## Development environment
+
+The maintainer works on **macOS (MacBook)** — that is the only platform available to
+build, run, and manually test this app. Keep code cross-platform (macOS, Linux, Windows),
+but verify behavior on macOS. Do NOT assume a Windows/Linux-specific quirk is the cause of
+a bug, and do NOT try to reproduce or "test" Windows-only behavior locally — you can't, and
+guessing at it wastes time. When a fix has platform branches (e.g. clipboard tools), cover
+them with a pure unit test of the platform→behavior mapping instead of a live cross-platform run.
+
 Default to using Bun instead of Node.js.
 
 - Use `bun <file>` instead of `node <file>` or `ts-node <file>`

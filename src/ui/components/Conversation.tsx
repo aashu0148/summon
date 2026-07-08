@@ -1,4 +1,5 @@
 import { useRenderer } from "@opentui/react";
+import { TextAttributes } from "@opentui/core";
 
 import type { Theme } from "../theme.ts";
 import { LABEL_TEXT, labelFg, bodyFg, groupTurns, type Turn } from "../constants.ts";
@@ -30,6 +31,7 @@ export function Conversation({ t, turns, streaming, thinking, busy, spin, activi
       flexShrink={1}
       minHeight={0}
       paddingLeft={2}
+      paddingRight={2}
       paddingTop={1}
       backgroundColor={t.bg}
       stickyScroll
@@ -51,18 +53,42 @@ export function Conversation({ t, turns, streaming, thinking, busy, spin, activi
       {/* Tool-call trace rows ("→ Read src/foo.ts") are hidden for now — they added a lot
           of bulk to the transcript. The ephemeral "what claude is doing" status line below
           still covers this. To bring them back, drop the `.filter(...)`. */}
-      {groupTurns(turns.filter((turn) => turn.role !== "tool")).map((group, i) => (
-        <box key={i} flexDirection="column" marginTop={i === 0 ? 0 : 1}>
-          <text content={LABEL_TEXT[group.role]} fg={labelFg(t, group.role)} />
-          {group.texts.map((text, j) =>
-            group.role === "claude" ? (
-              <markdown key={j} content={text} syntaxStyle={md} fg={t.ink} conceal marginTop={j === 0 ? 0 : 1} />
-            ) : (
-              <text key={j} content={text} fg={bodyFg(t, group.role)} marginTop={j === 0 ? 0 : 1} />
-            ),
-          )}
-        </box>
-      ))}
+      {groupTurns(turns.filter((turn) => turn.role !== "tool")).map((group, i) =>
+        group.role === "you" ? (
+          // User messages get an opencode-style treatment: a colored accent bar on the
+          // left and a shaded background, instead of a "YOU" label. The bar and tint both
+          // track the active theme.
+          <box
+            key={i}
+            flexDirection="column"
+            marginTop={i === 0 ? 0 : 1}
+            border={["left"]}
+            borderStyle="heavy"
+            borderColor={t.user}
+            backgroundColor={t.userBg}
+            paddingLeft={2}
+            paddingRight={2}
+            paddingTop={1}
+            paddingBottom={1}
+          >
+            <text content={LABEL_TEXT.you} fg={t.user} />
+            {group.texts.map((text, j) => (
+              <text key={j} content={text} fg={t.ink} attributes={TextAttributes.DIM} marginTop={1} />
+            ))}
+          </box>
+        ) : (
+          <box key={i} flexDirection="column" marginTop={i === 0 ? 0 : 1}>
+            <text content={LABEL_TEXT[group.role]} fg={labelFg(t, group.role)} />
+            {group.texts.map((text, j) =>
+              group.role === "claude" ? (
+                <markdown key={j} content={text} syntaxStyle={md} fg={t.ink} conceal marginTop={j === 0 ? 0 : 1} />
+              ) : (
+                <text key={j} content={text} fg={bodyFg(t, group.role)} marginTop={j === 0 ? 0 : 1} />
+              ),
+            )}
+          </box>
+        ),
+      )}
       {thinking ? (
         <box flexDirection="column" marginTop={turns.length ? 1 : 0}>
           <text content="THINKING" fg={t.sys} />
