@@ -206,7 +206,7 @@ export function App() {
       {conv.ask && askQ && conv.otherMode ? (
         <OtherInput t={t} askQ={askQ} onSubmit={askFlow.submitOther} />
       ) : overlay ? (
-        <OverlaySelect t={t} title={overlay.title} options={overlay.options} onSelect={overlay.onSelect} />
+        <OverlaySelect key={overlay.title} t={t} title={overlay.title} options={overlay.options} onSelect={overlay.onSelect} />
       ) : usageOpen ? (
         <UsagePanel t={t} usage={usage.usage!} now={Date.now()} />
       ) : (
