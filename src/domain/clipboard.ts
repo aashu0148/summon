@@ -5,18 +5,19 @@ import { join } from "node:path";
 import type { ImageAttachment } from "./content.ts";
 
 /**
- * What Ctrl+C should do, given the current text selection. Mirrors the Windows-Terminal
- * convention (and works identically on macOS/Linux): if the user has highlighted text, the
- * first Ctrl+C copies it instead of quitting; with nothing selected it quits as before.
+ * Whether a mousedown on `target` should manually begin a text selection.
  *
- * The terminal itself never delivers Cmd+C to the app (macOS routes Cmd to the terminal
- * emulator, which has no native selection to copy because we've grabbed the mouse for
- * scroll), so Ctrl+C is the one copy key the app can actually observe on every platform.
- * Pure so the branch is unit-tested without a live renderer.
+ * OpenTUI auto-starts a mouse selection only when the hit renderable's shouldStartSelection()
+ * returns true — which BoxRenderable never does (it inherits the base "return false"). In our
+ * transcript the scrollbox's content *box* wins the hit-test (it shadows its text children in
+ * the hit grid), so the automatic path never fires and drag-to-select produced nothing — which
+ * is why Ctrl+C always fell through to quit. The box is still `selectable`, so we start the
+ * selection ourselves (renderer.startSelection skips the shouldStartSelection check) and let the
+ * renderer extend it on drag and finalize on mouseup. Pure so the gate is unit-tested without a
+ * live renderer.
  */
-export function ctrlCAction(selectedText: string | null | undefined): { action: "copy"; text: string } | { action: "quit" } {
-  const text = typeof selectedText === "string" ? selectedText : "";
-  return text.trim() ? { action: "copy", text } : { action: "quit" };
+export function shouldStartSelection(target: { selectable?: boolean } | null | undefined): boolean {
+  return Boolean(target?.selectable);
 }
 
 /**

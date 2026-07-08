@@ -1,6 +1,9 @@
+import { useRenderer } from "@opentui/react";
+
 import type { Theme } from "../theme.ts";
 import { LABEL_TEXT, labelFg, bodyFg, groupTurns, type Turn } from "../constants.ts";
 import { markdownStyle } from "../markdown-style.ts";
+import { shouldStartSelection } from "../../domain/clipboard.ts";
 
 type Props = {
   t: Theme;
@@ -20,8 +23,28 @@ export function Conversation({ t, turns, streaming, thinking, busy, spin, activi
   // blocks, lists…) via OpenTUI's markdown renderable, tinted with the active theme.
   // conceal hides the raw ** ` # markers; other roles stay plain text.
   const md = markdownStyle(t);
+  const renderer = useRenderer();
   return (
-    <scrollbox flexGrow={1} flexShrink={1} minHeight={0} paddingLeft={2} paddingTop={1} backgroundColor={t.bg} stickyScroll stickyStart="bottom">
+    <scrollbox
+      flexGrow={1}
+      flexShrink={1}
+      minHeight={0}
+      paddingLeft={2}
+      paddingTop={1}
+      backgroundColor={t.bg}
+      stickyScroll
+      stickyStart="bottom"
+      // Make the scrollbox's content box selectable so a drag can anchor a selection on it;
+      // the renderer then walks its (selectable) text children to build the copied text.
+      contentOptions={{ selectable: true } as any}
+      // Drag to highlight transcript text (then Ctrl+C copies it — see app.tsx). OpenTUI's
+      // automatic selection never starts here because the content box wins the hit-test and
+      // boxes report shouldStartSelection=false, so we begin it by hand; the renderer then
+      // extends the drag and finalizes on release on its own.
+      onMouseDown={(e: any) => {
+        if (shouldStartSelection(e?.target)) renderer?.startSelection(e.target, e.x, e.y);
+      }}
+    >
       {turns.length === 0 && !streaming && !thinking ? (
         <text content="Ask anything. Enter to send · /help for commands · Ctrl+C to quit." fg={t.muted} />
       ) : null}

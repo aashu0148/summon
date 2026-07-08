@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useKeyboard, usePaste, useRenderer } from "@opentui/react";
 import { decodePasteBytes } from "@opentui/core";
 import { THEMES, THEME_NAMES, getTheme, shortModel, type Theme } from "./theme.ts";
@@ -22,7 +22,7 @@ import { QueuePanel } from "./components/QueuePanel.tsx";
 import { InputBar } from "./components/InputBar.tsx";
 import { AttachmentsPanel } from "./components/AttachmentsPanel.tsx";
 import { StatusBar } from "./components/StatusBar.tsx";
-import { readClipboardImage, ctrlCAction, writeClipboard } from "../domain/clipboard.ts";
+import { readClipboardImage, writeClipboard } from "../domain/clipboard.ts";
 import { toImageBlock } from "../domain/content.ts";
 
 export function App() {
@@ -106,23 +106,35 @@ export function App() {
     if (!decodePasteBytes(e.bytes).trim()) attachClipboardImage();
   });
 
-  // Ctrl+C: copy the current mouse selection if there is one, otherwise quit. We can't see
-  // Cmd+C (macOS hands it to the terminal, which has no native selection since useMouse
-  // grabs the pointer for scroll), so drag to highlight, then Ctrl+C. We write the OS
-  // clipboard directly (pbcopy/clip/wl-copy) — reliable locally — and also fire OSC52 so
-  // copy still works over SSH where the native tool isn't the remote's clipboard.
-  const copySelectionOrQuit = () => {
-    const decision = ctrlCAction(renderer?.getSelection()?.getSelectedText());
-    if (decision.action === "quit") { quit(); return; }
-    const osc = renderer?.copyToClipboardOSC52(decision.text) ?? false;
-    renderer?.clearSelection();
-    void writeClipboard(decision.text).then((native) => {
+  // Copy-on-select: the moment a drag-selection finishes, put its text on the clipboard.
+  // This is the only copy path that works everywhere — macOS hands Cmd+C to the terminal
+  // (never to us), and the terminal has no native selection to copy since useMouse grabs the
+  // pointer for scroll. So there's no key to press: drag to highlight and it's copied. We
+  // write the OS clipboard directly (pbcopy/clip/wl-copy) and also fire OSC52 so it still
+  // works over SSH where the native tool isn't the remote's clipboard. The highlight is left
+  // in place as confirmation; it clears on the next click/drag.
+  const copyText = (text: string) => {
+    const osc = renderer?.copyToClipboardOSC52(text) ?? false;
+    void writeClipboard(text).then((native) => {
       conv.pushSys(native || osc ? "copied selection to clipboard" : "copy failed — no clipboard tool found (install xclip/wl-clipboard)");
     });
   };
+  // The renderer's "selection" event fires once per finished drag; keep a ref so the
+  // subscribe-once listener always calls the latest closure (conv/renderer change per render).
+  const copyRef = useRef(copyText);
+  copyRef.current = copyText;
+  useEffect(() => {
+    if (!renderer) return;
+    const onSelection = (sel: { getSelectedText?: () => string } | null) => {
+      const text = sel?.getSelectedText?.() ?? "";
+      if (text.trim()) copyRef.current(text);
+    };
+    renderer.on("selection", onSelection);
+    return () => { renderer.off("selection", onSelection); };
+  }, [renderer]);
 
   useKeyboard((key) => {
-    if (key.ctrl && key.name === "c") copySelectionOrQuit();
+    if (key.ctrl && key.name === "c") quit();
     else if (key.ctrl && key.name === "v") attachClipboardImage();
     else if (usageOpen && (key.name === "escape" || key.name === "return" || key.name === "q")) usage.closeUsage();
     else if (composer.fileHints.length && key.name === "tab") composer.acceptMention();

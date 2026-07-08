@@ -1,5 +1,16 @@
 import { test, expect } from "bun:test";
-import { ctrlCAction, clipboardCommands } from "../../src/domain/clipboard.ts";
+import { clipboardCommands, shouldStartSelection } from "../../src/domain/clipboard.ts";
+
+test("shouldStartSelection begins a selection only on a selectable target", () => {
+  // The scrollbox content box is only selectable after we opt it in; when it is, a
+  // mousedown there must kick off the selection by hand (OpenTUI won't auto-start on a box).
+  expect(shouldStartSelection({ selectable: true })).toBe(true);
+  expect(shouldStartSelection({ selectable: false })).toBe(false);
+  // No target / missing flag → never start (e.g. press lands on a non-selectable region).
+  expect(shouldStartSelection(null)).toBe(false);
+  expect(shouldStartSelection(undefined)).toBe(false);
+  expect(shouldStartSelection({})).toBe(false);
+});
 
 test("clipboardCommands picks the native tool per platform", () => {
   expect(clipboardCommands("darwin")).toEqual([["pbcopy"]]);
@@ -8,20 +19,4 @@ test("clipboardCommands picks the native tool per platform", () => {
   const linux = clipboardCommands("linux");
   expect(linux[0]).toEqual(["wl-copy"]);
   expect(linux.map((c) => c[0])).toEqual(["wl-copy", "xclip", "xsel"]);
-});
-
-test("ctrlCAction quits when there is no selection", () => {
-  expect(ctrlCAction(null)).toEqual({ action: "quit" });
-  expect(ctrlCAction(undefined)).toEqual({ action: "quit" });
-  expect(ctrlCAction("")).toEqual({ action: "quit" });
-});
-
-test("ctrlCAction quits when the selection is only whitespace", () => {
-  expect(ctrlCAction("   \n\t ")).toEqual({ action: "quit" });
-});
-
-test("ctrlCAction copies real selected text verbatim (whitespace preserved)", () => {
-  expect(ctrlCAction("hello world")).toEqual({ action: "copy", text: "hello world" });
-  // Leading/trailing whitespace is kept in the copied text — only the emptiness check trims.
-  expect(ctrlCAction("  foo\nbar  ")).toEqual({ action: "copy", text: "  foo\nbar  " });
 });
