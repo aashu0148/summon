@@ -3,7 +3,7 @@ import { useKeyboard, usePaste, useRenderer } from "@opentui/react";
 import { decodePasteBytes } from "@opentui/core";
 import { THEMES, THEME_NAMES, getTheme, shortModel, type Theme } from "./theme.ts";
 import { loadConfig, saveConfig } from "../config.ts";
-import { COMMANDS, dispatchCommand, type CommandCtx } from "../domain/commands.ts";
+import { COMMANDS, dispatchCommand, activeSlashToken, type CommandCtx } from "../domain/commands.ts";
 import { loadSkills, skillsAsCommands } from "../domain/skills.ts";
 import { fmtTok, totalTok } from "../lib/format.ts";
 import { MENTION_RE } from "./constants.ts";
@@ -137,7 +137,9 @@ export function App() {
     // case fall through and run it. Second Enter after completion always runs.
     if (composer.hints.length) {
       const cmd = composer.hints[composer.cmdSel] ?? composer.hints[0];
-      if (cmd && "/" + cmd.name !== value.trim().split(/\s+/)[0]) { composer.acceptCommand(composer.hints); return; }
+      // Complete first unless the active /token already IS the selected command (fully
+      // typed) — then fall through and run it. Works for start- and mid-message tokens.
+      if (cmd && cmd.name !== activeSlashToken(composer.draftRef.current)) { composer.acceptCommand(composer.hints); return; }
     }
     const text = value.trim();
     const images = composer.attachments.map(toImageBlock); // capture before clear wipes them

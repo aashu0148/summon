@@ -131,28 +131,37 @@ export const COMMANDS: Command[] = [
   },
 ];
 
+// The `/token` the cursor is currently on: a slash on a start/whitespace boundary with
+// no trailing space, anchored to the end of the draft. Mirrors MENTION_RE so commands
+// autocomplete mid-message ("make a landing page /desi"), not just at the start. The
+// boundary rule keeps URLs/paths ("http://x", "a/b") from being read as commands.
+const SLASH_RE = /(?:^|\s)\/(\S*)$/;
+
+/** The active slash-token being typed (without the "/"), or null if none. */
+export function activeSlashToken(draft: string): string | null {
+  return draft.match(SLASH_RE)?.[1] ?? null;
+}
+
 /**
- * Suggestions for a `/`-draft. Returns [] when there's no leading slash or once
- * the command is "committed" — i.e. a space already follows the token ("/name "),
- * meaning the user is typing args and the menu should get out of the way (this is
- * what lets a second Enter actually run it, mirroring the @-mention picker).
+ * Suggestions for the `/token` under the cursor. Returns [] when there's no active
+ * slash-token or once it's "committed" — a space following the token drops the `$`
+ * match, so the menu gets out of the way and the next Enter runs it (mirrors @-mentions).
  */
 export function matchCommands(commands: Command[], draft: string, limit = 8): Command[] {
-  if (!draft.startsWith("/")) return [];
-  if (/^\/\S+\s/.test(draft)) return []; // committed → no menu
-  const tok = draft.split(/\s+/)[0] ?? "";
+  const token = activeSlashToken(draft);
+  if (token === null) return [];
+  const tok = "/" + token;
   return commands.filter((c) => ("/" + c.name).startsWith(tok)).slice(0, limit);
 }
 
 /**
- * Complete the leading `/token` of `draft` to `/name`, preserving any args after
- * the first space. When there are no args a trailing space is added so the token
- * is "committed" and the next Enter runs it.
+ * Complete the active `/token` (wherever it sits in the draft) to `/name`, keeping the
+ * text before it intact and adding a trailing space so it's "committed" and the next
+ * Enter runs it.
  */
 export function completeCommand(draft: string, name: string): string {
-  const m = /^\/\S*(.*)$/.exec(draft);
-  const rest = m?.[1] ?? "";
-  return "/" + name + (rest.length ? rest : " ");
+  if (!SLASH_RE.test(draft)) return draft;
+  return draft.replace(SLASH_RE, (m) => m.slice(0, m.indexOf("/")) + "/" + name + " ");
 }
 
 /**

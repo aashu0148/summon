@@ -2,6 +2,7 @@ import { test, expect, describe } from "bun:test";
 import {
   matchCommands,
   completeCommand,
+  activeSlashToken,
   formatCommandHint,
   dispatchCommand,
   formatUsage,
@@ -76,13 +77,37 @@ describe("matchCommands", () => {
     expect(matchCommands(CMDS, "/").map((c) => c.name)).toEqual(["design", "deep-research", "clear"]);
   });
 
+  test("suggests mid-message on the active /token, not just at the start", () => {
+    expect(matchCommands(CMDS, "make a landing page /de").map((c) => c.name)).toEqual(["design", "deep-research"]);
+    expect(matchCommands(CMDS, "build a nav /").map((c) => c.name)).toEqual(["design", "deep-research", "clear"]);
+  });
+
+  test("ignores slashes that aren't on a word boundary (paths, URLs)", () => {
+    expect(matchCommands(CMDS, "see http://x/de")).toEqual([]);
+    expect(matchCommands(CMDS, "src/de")).toEqual([]);
+  });
+
   test("committed token (space after name) → no hints, so the next Enter runs it", () => {
     expect(matchCommands(CMDS, "/design ")).toEqual([]);
     expect(matchCommands(CMDS, "/design build a nav")).toEqual([]);
+    expect(matchCommands(CMDS, "make a nav /design ")).toEqual([]);
   });
 
   test("respects the limit", () => {
     expect(matchCommands(CMDS, "/", 2)).toHaveLength(2);
+  });
+});
+
+describe("activeSlashToken", () => {
+  test("returns the trailing /token being typed (start or mid-message)", () => {
+    expect(activeSlashToken("/mod")).toBe("mod");
+    expect(activeSlashToken("hello /mod")).toBe("mod");
+    expect(activeSlashToken("/")).toBe("");
+  });
+  test("null when there's no active token (committed, path, or plain text)", () => {
+    expect(activeSlashToken("/model ")).toBeNull();
+    expect(activeSlashToken("src/de")).toBeNull();
+    expect(activeSlashToken("plain text")).toBeNull();
   });
 });
 
@@ -91,8 +116,8 @@ describe("completeCommand", () => {
     expect(completeCommand("/de", "design")).toBe("/design ");
   });
 
-  test("preserves args after the first space", () => {
-    expect(completeCommand("/de build a nav", "design")).toBe("/design build a nav");
+  test("completes the active mid-message token, keeping the text before it", () => {
+    expect(completeCommand("make a landing page /de", "design")).toBe("make a landing page /design ");
   });
 
   test("re-completing an exact token is idempotent (adds the committing space)", () => {
