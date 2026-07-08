@@ -9,6 +9,7 @@
 
 import { spawn } from "node:child_process";
 import { oneLine } from "../lib/format.ts";
+import { resolveClaudeLaunch } from "./claude-bin.ts";
 
 // The model the CLI uses for the title call. Haiku is cheap and fast; a title is a
 // trivial task, so we don't burn Opus/Sonnet budget on it.
@@ -104,11 +105,15 @@ export function generateTitle(
     const timer = setTimeout(() => finish(null), timeoutMs);
 
     try {
-      proc = spawn("claude", [...BASE_ARGS, "--model", model], {
+      const { command, shell } = resolveClaudeLaunch();
+      proc = spawn(command, [...BASE_ARGS, "--model", model], {
         stdio: ["pipe", "pipe", "ignore"],
         env,
         cwd: process.cwd(),
+        shell,
       });
+      // If the resolved binary still can't be exec'd, don't hang — title just falls back.
+      proc.on("error", () => finish(null));
     } catch {
       return finish(null);
     }

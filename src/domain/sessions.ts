@@ -22,7 +22,7 @@ export function sessionLabel(m: SessionMeta): string {
 
 // A reconstructed conversation entry for replaying a resumed session into the UI. `file`
 // rows carry their accumulated edit so consecutive same-file edits fold into one row.
-export type TranscriptTurn = { role: "you" | "claude" | "file" | "tool"; text: string; file?: FileEdit };
+export type TranscriptTurn = { role: "you" | "claude" | "file" | "write" | "tool"; text: string; file?: FileEdit };
 
 function projectDir(cwd: string): string {
   return join(homedir(), ".claude", "projects", cwd.replace(/\//g, "-"));
@@ -122,11 +122,12 @@ export function loadTranscript(sessionId: string, cwd: string): TranscriptTurn[]
         else if (b?.type === "tool_use") {
           const fc = fileChangeFromToolUse(b.name, b.input);
           if (fc) {
-            const edit = { rel: relPath(fc.path, cwd), added: fc.added, removed: fc.removed };
+            const edit = { rel: relPath(fc.path, cwd), added: fc.added, removed: fc.removed, kind: fc.kind };
+            const role = fc.kind === "write" ? "write" : "file";
             const last = turns[turns.length - 1];
-            const merged = last?.role === "file" ? foldFileEdit(last.file, edit) : null;
-            if (merged) turns[turns.length - 1] = { role: "file", text: fileTurnText(merged), file: merged };
-            else turns.push({ role: "file", text: fileTurnText(edit), file: edit });
+            const merged = last?.role === role ? foldFileEdit(last.file, edit) : null;
+            if (merged) turns[turns.length - 1] = { role, text: fileTurnText(merged), file: merged };
+            else turns.push({ role, text: fileTurnText(edit), file: edit });
           } else {
             // Non-mutating tool (Read/Bash/Grep/…): replay it as the same "→ Tool target"
             // trace the live view shows, so a resumed chat isn't missing that history.

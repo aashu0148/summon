@@ -3,6 +3,8 @@ import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { buildUserContent, type ImageBlock } from "../domain/content.ts";
+import { diffLineCounts, type FileEditKind } from "../domain/file-edits.ts";
+import { resolveClaudeLaunch } from "../domain/claude-bin.ts";
 
 /**
  * Minimal "summoner core", distilled from Code Quest's ProcessRunner +
@@ -26,23 +28,36 @@ const BASE_ARGS = [
 
 export type Usage = { input: number; output: number; cacheRead: number; cacheCreate: number };
 
-export type FileChange = { path: string; added: number; removed: number };
+export type FileChange = { path: string; added: number; removed: number; kind: FileEditKind };
 
 /**
- * Derive a file-change summary (path + lines added/removed) from a file-mutating
- * tool's input. Shared by the live session and transcript replay so both render the
- * same "✎ path +N -M" line. Returns null for non-mutating tools.
+ * Derive a file-change summary (path + lines added/removed + kind) from a file-mutating
+ * tool's input. Shared by the live session and transcript replay so both render the same
+ * "✎ path +N −M" line. Returns null for non-mutating tools.
+ *
+ * Edit/MultiEdit carry both old and new text, so we run a real LCS line diff — a one-line
+ * tweak reads as "+1 −1", not "+10 −10". Write/NotebookEdit only carry the new content
+ * (the prior file isn't in the input), so removals are genuinely unknown: we mark them
+ * `kind:"write"`, count only additions, and the UI renders "+N" under a WRITE label rather
+ * than a misleading "−0" EDIT.
  */
 export function fileChangeFromToolUse(name: string, input: any): FileChange | null {
   const lines = (s: any) => (typeof s === "string" && s.length ? s.split("\n").length : 0);
-  if (name === "Write") return { path: input?.file_path ?? "?", added: lines(input?.content), removed: 0 };
-  if (name === "Edit") return { path: input?.file_path ?? "?", added: lines(input?.new_string), removed: lines(input?.old_string) };
+  const str = (s: any) => (typeof s === "string" ? s : "");
+  if (name === "Write") return { path: input?.file_path ?? "?", added: lines(input?.content), removed: 0, kind: "write" };
+  if (name === "Edit") {
+    const { added, removed } = diffLineCounts(str(input?.old_string), str(input?.new_string));
+    return { path: input?.file_path ?? "?", added, removed, kind: "edit" };
+  }
   if (name === "MultiEdit") {
     let added = 0, removed = 0;
-    for (const e of input?.edits ?? []) { added += lines(e?.new_string); removed += lines(e?.old_string); }
-    return { path: input?.file_path ?? "?", added, removed };
+    for (const e of input?.edits ?? []) {
+      const d = diffLineCounts(str(e?.old_string), str(e?.new_string));
+      added += d.added; removed += d.removed;
+    }
+    return { path: input?.file_path ?? "?", added, removed, kind: "edit" };
   }
-  if (name === "NotebookEdit") return { path: input?.notebook_path ?? input?.file_path ?? "?", added: lines(input?.new_source), removed: 0 };
+  if (name === "NotebookEdit") return { path: input?.notebook_path ?? input?.file_path ?? "?", added: lines(input?.new_source), removed: 0, kind: "write" };
   return null;
 }
 
@@ -98,7 +113,7 @@ export type SessionEvent =
   | { type: "result"; costUsd: number; ms: number; text: string; usage: Usage }
   | { type: "available_models"; models: string[] }
   | { type: "tool"; name: string; detail: string }  // a tool was invoked (auto-approved); detail = its target
-  | { type: "file_change"; path: string; added: number; removed: number } // a file was written/edited
+  | { type: "file_change"; path: string; added: number; removed: number; kind: FileEditKind } // a file was written/edited
   | { type: "ask"; requestId: string; questions: AskQuestion[] } // AskUserQuestion — needs the user to pick
   | { type: "control"; subtype: string; raw: any }  // unhandled control request (surfaced, not hung)
   | { type: "error"; message: string }
@@ -144,9 +159,27 @@ export class ClaudeSession extends EventEmitter {
     else if (opts.continueLast) args.push("--continue");
     if (opts.model) args.push("--model", opts.model);
 
+    // Resolve `claude` to a concrete path (and learn if it needs a shell) rather
+    // than trusting the inherited PATH + direct-exec — see domain/claude-bin.ts.
+    //
+    // CAVEAT: `shell:true` (Windows .cmd/.ps1 shims) hands args to cmd.exe, which
+    // re-parses them — so any arg containing a space, quote, or shell metachar (& | ^ %)
+    // would need escaping. Every entry in BASE_ARGS/`args` here is a bare flag or a
+    // safe value (model names, --resume session UUIDs), so this is currently fine. If
+    // you ever add a free-text or path arg, quote it before it reaches spawn.
+    const { command, shell } = resolveClaudeLaunch();
+
     // cwd = the directory `summon` was launched from, so the spawned claude
     // operates on the user's current project (drop-in Claude Code launcher).
-    const proc = spawn("claude", args, { stdio: ["pipe", "pipe", "pipe"], env, cwd: process.cwd() });
+    let proc: ChildProcess;
+    try {
+      proc = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env, cwd: process.cwd(), shell });
+    } catch (err) {
+      // spawn can throw synchronously (bad shell, EACCES) — don't leave the caller
+      // waiting on a session that never started. Surface it and mark the turn done.
+      this.fail(`could not launch claude (${command}): ${(err as Error).message}`);
+      return;
+    }
     this.proc = proc;
 
     createInterface({ input: proc.stdout! }).on("line", (line) => this.handleLine(line));
@@ -155,11 +188,22 @@ export class ClaudeSession extends EventEmitter {
       const s = line.trim();
       if (s) this.emit("event", { type: "error", message: `stderr: ${s}` });
     });
-    proc.on("close", (code) => this.emit("event", { type: "exit", code }));
+    proc.on("close", (code) => { this.proc = null; this.emit("event", { type: "exit", code }); });
     proc.on("error", (err) => {
-      this.emit("event", { type: "error", message: `spawn failed: ${err.message}` });
-      this.emit("event", { type: "exit", code: -1 });
+      // ENOENT here means the resolved path/shim still couldn't be exec'd.
+      this.fail(`could not launch claude (${command}): ${err.message}`);
     });
+  }
+
+  /**
+   * Report a fatal launch/send failure and end the turn. Nulls `proc` so later
+   * sends don't write into a dead pipe (which is what made a broken `claude`
+   * look like an infinite "thinking" spinner instead of an error).
+   */
+  private fail(message: string): void {
+    this.proc = null;
+    this.emit("event", { type: "error", message });
+    this.emit("event", { type: "exit", code: -1 });
   }
 
   private handleLine(line: string): void {
@@ -335,6 +379,12 @@ export class ClaudeSession extends EventEmitter {
   send(text: string, images: ImageBlock[] = []): void {
     const content = buildUserContent(text, images);
     if (!content.length) return; // nothing to send (empty text, no images)
+    // No live process (failed spawn / crashed) — writing to a dead stdin silently
+    // no-ops and the turn hangs forever. Fail loudly so the spinner stops instead.
+    if (!this.proc?.stdin?.writable) {
+      this.fail("claude is not running — the session failed to start (see the error above)");
+      return;
+    }
     this.resetTurnUsage(); // new turn — start the live token counter from zero
     this.writeLine({ type: "user", message: { role: "user", content } });
   }

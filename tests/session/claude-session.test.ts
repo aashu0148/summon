@@ -15,24 +15,36 @@ function harness() {
 const only = (events: SessionEvent[], type: string) => events.filter((e) => e.type === type);
 
 describe("fileChangeFromToolUse", () => {
-  test("Write counts content lines as added, 0 removed", () => {
+  test("Write counts content lines as added, 0 removed, kind write", () => {
     expect(fileChangeFromToolUse("Write", { file_path: "a.ts", content: "x\ny\nz" }))
-      .toEqual({ path: "a.ts", added: 3, removed: 0 });
+      .toEqual({ path: "a.ts", added: 3, removed: 0, kind: "write" });
   });
-  test("Edit counts new vs old lines", () => {
+  test("Edit diffs new vs old, counting only changed lines", () => {
+    // old ["1"], new ["1","2"]: the "1" is unchanged context → only "2" is added.
     expect(fileChangeFromToolUse("Edit", { file_path: "a.ts", new_string: "1\n2", old_string: "1" }))
-      .toEqual({ path: "a.ts", added: 2, removed: 1 });
+      .toEqual({ path: "a.ts", added: 1, removed: 0, kind: "edit" });
   });
-  test("MultiEdit sums across edits", () => {
+  test("Edit ignores unchanged context lines (one-line tweak in a block)", () => {
+    // A single middle line changes; the surrounding lines are shared context → +1 −1,
+    // not +5 −5 (the old whole-block line count).
+    const fc = fileChangeFromToolUse("Edit", {
+      file_path: "a.ts",
+      old_string: "a\nb\nc\nd\ne",
+      new_string: "a\nb\nX\nd\ne",
+    });
+    expect(fc).toEqual({ path: "a.ts", added: 1, removed: 1, kind: "edit" });
+  });
+  test("MultiEdit sums the per-edit diffs", () => {
+    // edit1: old ["a"], new ["a","b"] → +1 −0. edit2: old ["c","d","e"], new ["c"] → +0 −2.
     const fc = fileChangeFromToolUse("MultiEdit", {
       file_path: "a.ts",
       edits: [{ new_string: "a\nb", old_string: "a" }, { new_string: "c", old_string: "c\nd\ne" }],
     });
-    expect(fc).toEqual({ path: "a.ts", added: 3, removed: 4 });
+    expect(fc).toEqual({ path: "a.ts", added: 1, removed: 2, kind: "edit" });
   });
-  test("NotebookEdit falls back through path fields", () => {
+  test("NotebookEdit falls back through path fields, kind write", () => {
     expect(fileChangeFromToolUse("NotebookEdit", { notebook_path: "n.ipynb", new_source: "x" }))
-      .toEqual({ path: "n.ipynb", added: 1, removed: 0 });
+      .toEqual({ path: "n.ipynb", added: 1, removed: 0, kind: "write" });
   });
   test("non-mutating tool returns null", () => {
     expect(fileChangeFromToolUse("Read", { file_path: "a.ts" })).toBeNull();
@@ -40,7 +52,7 @@ describe("fileChangeFromToolUse", () => {
   });
   test("empty string content counts as 0 lines", () => {
     expect(fileChangeFromToolUse("Write", { file_path: "a.ts", content: "" }))
-      .toEqual({ path: "a.ts", added: 0, removed: 0 });
+      .toEqual({ path: "a.ts", added: 0, removed: 0, kind: "write" });
   });
 });
 
@@ -104,7 +116,7 @@ describe("line parsing", () => {
     };
     feed(frame);
     feed(frame); // repeated frame — must NOT emit a second file_change
-    expect(only(events, "file_change")).toEqual([{ type: "file_change", path: "z.ts", added: 2, removed: 0 }]);
+    expect(only(events, "file_change")).toEqual([{ type: "file_change", path: "z.ts", added: 2, removed: 0, kind: "write" }]);
     expect(only(events, "tool")).toEqual([]); // mutating tool → file_change only, no tool row
   });
 
@@ -202,5 +214,27 @@ describe("live usage accumulation", () => {
     feed({ type: "stream_event", event: { type: "message_start", message: { usage: { input_tokens: 7, output_tokens: 2 } } } });
     const last = only(events, "usage").at(-1) as any;
     expect(last.usage).toEqual({ input: 7, output: 2, cacheRead: 0, cacheCreate: 0 }); // not 107/52
+  });
+});
+
+describe("send without a live process (anti-hang)", () => {
+  // A failed spawn used to leave `send()` writing into a dead/absent stdin, which
+  // silently no-oped — the UI kept the "thinking" spinner up forever. send() must
+  // now surface an error + exit so the turn ends instead of hanging.
+  test("emits error + exit(-1) instead of silently no-oping", () => {
+    const s = new ClaudeSession(); // never spawned → this.proc is null
+    const events: SessionEvent[] = [];
+    s.on("event", (e) => events.push(e));
+    s.send("hello");
+    expect(only(events, "error")).toHaveLength(1);
+    expect(only(events, "exit")).toEqual([{ type: "exit", code: -1 }]);
+  });
+
+  test("empty content still no-ops without erroring", () => {
+    const s = new ClaudeSession();
+    const events: SessionEvent[] = [];
+    s.on("event", (e) => events.push(e));
+    s.send(""); // empty, no images → nothing to send
+    expect(events).toHaveLength(0);
   });
 });

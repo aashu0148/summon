@@ -22,7 +22,7 @@ import { QueuePanel } from "./components/QueuePanel.tsx";
 import { InputBar } from "./components/InputBar.tsx";
 import { AttachmentsPanel } from "./components/AttachmentsPanel.tsx";
 import { StatusBar } from "./components/StatusBar.tsx";
-import { readClipboardImage } from "../domain/clipboard.ts";
+import { readClipboardImage, ctrlCAction, writeClipboard } from "../domain/clipboard.ts";
 import { toImageBlock } from "../domain/content.ts";
 
 export function App() {
@@ -106,8 +106,23 @@ export function App() {
     if (!decodePasteBytes(e.bytes).trim()) attachClipboardImage();
   });
 
+  // Ctrl+C: copy the current mouse selection if there is one, otherwise quit. We can't see
+  // Cmd+C (macOS hands it to the terminal, which has no native selection since useMouse
+  // grabs the pointer for scroll), so drag to highlight, then Ctrl+C. We write the OS
+  // clipboard directly (pbcopy/clip/wl-copy) — reliable locally — and also fire OSC52 so
+  // copy still works over SSH where the native tool isn't the remote's clipboard.
+  const copySelectionOrQuit = () => {
+    const decision = ctrlCAction(renderer?.getSelection()?.getSelectedText());
+    if (decision.action === "quit") { quit(); return; }
+    const osc = renderer?.copyToClipboardOSC52(decision.text) ?? false;
+    renderer?.clearSelection();
+    void writeClipboard(decision.text).then((native) => {
+      conv.pushSys(native || osc ? "copied selection to clipboard" : "copy failed — no clipboard tool found (install xclip/wl-clipboard)");
+    });
+  };
+
   useKeyboard((key) => {
-    if (key.ctrl && key.name === "c") quit();
+    if (key.ctrl && key.name === "c") copySelectionOrQuit();
     else if (key.ctrl && key.name === "v") attachClipboardImage();
     else if (usageOpen && (key.name === "escape" || key.name === "return" || key.name === "q")) usage.closeUsage();
     else if (composer.fileHints.length && key.name === "tab") composer.acceptMention();

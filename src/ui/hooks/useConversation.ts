@@ -6,7 +6,7 @@ import type { ImageBlock } from "../../domain/content.ts";
 import { buildTitle, titleLabel, titleSequence } from "../../domain/title.ts";
 import { generateTitle } from "../../domain/title-gen.ts";
 import { saveTitle } from "../../title-store.ts";
-import { SPINNER, ZERO, PROJECT, toolActivity, toolLine, type Turn, type Ask } from "../constants.ts";
+import { SPINNER, ZERO, PROJECT, toolActivity, toolLine, type Turn, type Ask, type Role } from "../constants.ts";
 import { relPath, fileTurnText, foldFileEdit } from "../../domain/file-edits.ts";
 
 // File-mutating tools already get a nicer "EDIT ✎ path +N −M" row via the file_change
@@ -125,15 +125,18 @@ export function useConversation() {
         if (e.models.length) setModels(e.models);
         break;
       case "file_change": {
-        const edit = { rel: relPath(e.path, process.cwd()), added: e.added, removed: e.removed };
+        const edit = { rel: relPath(e.path, process.cwd()), added: e.added, removed: e.removed, kind: e.kind };
+        // A write (unknown removals) gets the WRITE label; an edit gets EDIT. Distinct
+        // roles also keep the two from grouping under one header when interleaved.
+        const role: Role = e.kind === "write" ? "write" : "file";
         setTurns((p) => {
-          // Fold into the previous row when it's an edit to the same file, so a run of
-          // edits to one file stays a single updating entry instead of piling up rows.
+          // Fold into the previous row when it's the same kind of change to the same file,
+          // so a run of edits to one file stays a single updating entry instead of piling up.
           const last = p[p.length - 1];
-          const merged = last?.role === "file" ? foldFileEdit(last.file, edit) : null;
+          const merged = last?.role === role ? foldFileEdit(last.file, edit) : null;
           const row: Turn = merged
-            ? { role: "file", text: fileTurnText(merged), file: merged }
-            : { role: "file", text: fileTurnText(edit), file: edit };
+            ? { role, text: fileTurnText(merged), file: merged }
+            : { role, text: fileTurnText(edit), file: edit };
           return merged ? [...p.slice(0, -1), row] : [...p, row];
         });
         break;
