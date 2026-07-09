@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { matchCommands, completeCommand, type Command } from "../../domain/commands.ts";
-import { listFilesForQuery, matchFiles, splitQueryDir } from "../../domain/files.ts";
+import { fileListKey, listFilesForQuery, matchFiles } from "../../domain/files.ts";
 import { imageMarker, type ImageAttachment } from "../../domain/content.ts";
 import { MENTION_RE } from "../constants.ts";
 
@@ -35,11 +35,11 @@ export function useComposer(allCommands: Command[]) {
     const m = value.match(MENTION_RE);
     if (m) {
       const query = m[1] ?? "";
-      const { dir } = splitQueryDir(query); // "../" etc. reroots the walk outside the project
-      let list = filesRef.current.get(dir);
+      const key = fileListKey(query); // keys on walk dir + hidden-ness ("../" reroots; ".ai" adds hidden)
+      let list = filesRef.current.get(key);
       if (!list) {
         list = listFilesForQuery(process.cwd(), query);
-        filesRef.current.set(dir, list);
+        filesRef.current.set(key, list);
       }
       setFileHints(matchFiles(list, query));
       setFileSel(0); // reset highlight to the top match on every keystroke
