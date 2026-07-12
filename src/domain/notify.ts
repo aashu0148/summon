@@ -5,6 +5,8 @@
 // the click-target derivation are pure and unit-tested here; the spawn / tool + env detection
 // is a thin side-effecting wrapper.
 
+import { existsSync, readFileSync } from "node:fs";
+
 export type NotifyCmd = { cmd: string; args: string[] };
 
 export type NotifyOpts = {
@@ -38,11 +40,67 @@ export function editorAppBundle(askpassMain: string | undefined): string | undef
   return i === -1 ? undefined : askpassMain.slice(0, i + 4); // up to and including ".app"
 }
 
-// Click action for an editor session: reopen this folder in that editor. When the folder is
-// already open in a window, the editor focuses *that* window — which is the one running the
-// session — instead of whatever window happened to be frontmost.
-export function openFolderCommand(appBundle: string, cwd: string): string {
-  return `open -a ${shQuote(appBundle)} ${shQuote(cwd)}`;
+// Candidate CLI paths inside an editor's app bundle, best-first. Each editor ships its own CLI
+// under Contents/Resources/app/bin (VS Code → "code", Cursor → "cursor", …); only its own name
+// exists there, so probing these disambiguates the editor without PATH guesswork. We use the
+// bundled CLI — not `open -a` — because `open` sends an "open folder" event that VS Code often
+// answers by spawning a NEW window, whereas the CLI focuses the window already showing it.
+export function editorCliCandidates(appBundle: string): string[] {
+  const bin = `${appBundle}/Contents/Resources/app/bin`;
+  return ["code", "code-insiders", "cursor", "windsurf", "codium"].map((n) => `${bin}/${n}`);
+}
+
+// Click action for an editor session: run the editor's CLI on this folder. When the folder is
+// already open in a window, the editor focuses *that* window — the one running the session —
+// instead of opening a duplicate or surfacing whatever window happened to be frontmost.
+export function openFolderCommand(editorCli: string, folder: string): string {
+  return `${shQuote(editorCli)} ${shQuote(folder)}`;
+}
+
+// A "file://" URI (or already-plain path) → filesystem path. undefined if unparseable.
+export function uriToPath(folder: string | undefined): string | undefined {
+  if (!folder) return undefined;
+  if (!folder.startsWith("file://")) return folder;
+  try { return decodeURIComponent(new URL(folder).pathname); } catch { return undefined; }
+}
+
+// The folder paths of every currently-open editor window, parsed from VS Code / Cursor's
+// globalStorage `storage.json` (its `windowsState`). This is the ground truth for what's open —
+// no guessing, no permissions, just reading a JSON file the editor maintains.
+export function parseOpenFolders(storageJson: string): string[] {
+  try {
+    const ws = (JSON.parse(storageJson).windowsState ?? {}) as {
+      openedWindows?: { folder?: string }[];
+      lastActiveWindow?: { folder?: string };
+    };
+    return [...(ws.openedWindows ?? []), ws.lastActiveWindow]
+      .map((w) => uriToPath(w?.folder))
+      .filter((p): p is string => !!p);
+  } catch {
+    return [];
+  }
+}
+
+// The open workspace that actually contains cwd — the deepest open folder that is cwd or an
+// ancestor of it. That's the exact folder the editor has open, so handing it to the CLI focuses
+// that window instead of spawning a duplicate. undefined if no open window contains cwd.
+export function pickWorkspaceFolder(cwd: string, openFolders: string[]): string | undefined {
+  const contains = (f: string) => cwd === f || cwd.startsWith(f.endsWith("/") ? f : f + "/");
+  return openFolders.filter(contains).sort((a, b) => b.length - a.length)[0];
+}
+
+// Which folder to hand the editor so it focuses the RIGHT window. Prefer an actually-open
+// workspace that contains cwd (guaranteed to focus, never duplicates — this is the reliable
+// path). Only if nothing open contains cwd do we fall back: the git root, then cwd.
+export function focusFolder(cwd: string, openFolders: string[], gitToplevel: string | undefined): string {
+  return pickWorkspaceFolder(cwd, openFolders) ?? gitToplevel?.trim() ?? cwd;
+}
+
+// VS Code's user-data dir name differs from its bundle name ("Visual Studio Code" → "Code");
+// Cursor/Windsurf/VSCodium match. Used to locate that editor's storage.json.
+export function editorDataDirName(appBundle: string): string {
+  const base = (appBundle.split("/").pop() ?? "").replace(/\.app$/, "");
+  return base.startsWith("Visual Studio Code") ? base.replace("Visual Studio Code", "Code") : base;
 }
 
 // Build the notifier invocation for a platform, or null if we don't know how to notify there.
@@ -97,26 +155,63 @@ export function resolveNotifyOpts(input: {
   env: NotifyEnv;
   hasTerminalNotifier: boolean;
   cwd: string;
+  editorCli?: string; // resolved bundled-CLI path for the host editor, if any (side-effecting to find)
 }): NotifyOpts {
-  const { platform, env, hasTerminalNotifier, cwd } = input;
+  const { platform, env, hasTerminalNotifier, cwd, editorCli } = input;
   if (platform !== "darwin") return {};
-  const bundle = editorAppBundle(env.VSCODE_GIT_ASKPASS_MAIN);
   return {
     hasTerminalNotifier,
     bundleId: env.__CFBundleIdentifier, // app-level focus fallback (iTerm2, Terminal.app, …)
-    executeCommand: bundle ? openFolderCommand(bundle, cwd) : undefined, // exact-window focus for editors
+    executeCommand: editorCli ? openFolderCommand(editorCli, cwd) : undefined, // exact-window focus for editors
   };
+}
+
+// Locate the running editor's own CLI (side-effecting: touches the filesystem). Probes the
+// bundle's bin dir for the one CLI it ships; undefined outside an editor or if none is found.
+function resolveEditorCli(env: NotifyEnv): string | undefined {
+  const bundle = editorAppBundle(env.VSCODE_GIT_ASKPASS_MAIN);
+  if (!bundle) return undefined;
+  return editorCliCandidates(bundle).find((p) => existsSync(p));
+}
+
+// The git repo root of `cwd`, or undefined outside a repo / if git is unavailable (side-effecting).
+function gitToplevel(cwd: string): string | undefined {
+  try {
+    const r = Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--show-toplevel"], { stdout: "pipe", stderr: "ignore" });
+    return r.success ? r.stdout.toString().trim() || undefined : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Read the host editor's list of open window folders from its storage.json (side-effecting).
+// Empty outside an editor or if the file can't be read/parsed.
+function readOpenFolders(env: NotifyEnv): string[] {
+  const bundle = editorAppBundle(env.VSCODE_GIT_ASKPASS_MAIN);
+  const home = process.env.HOME;
+  if (!bundle || !home) return [];
+  const path = `${home}/Library/Application Support/${editorDataDirName(bundle)}/User/globalStorage/storage.json`;
+  try {
+    return parseOpenFolders(readFileSync(path, "utf8"));
+  } catch {
+    return [];
+  }
 }
 
 // Fire-and-forget the desktop notification. Best-effort: if the notifier is missing or fails
 // (no notify-send installed, etc.) we swallow it — a missed nudge must never crash a turn.
 // terminal-notifier is optional: present ⇒ click-to-focus, absent ⇒ plain osascript banner.
 export function sendNotification(title: string, message: string): void {
+  const darwin = process.platform === "darwin";
+  const cwd = process.cwd();
   const opts = resolveNotifyOpts({
     platform: process.platform,
     env: process.env,
-    hasTerminalNotifier: process.platform === "darwin" && Bun.which("terminal-notifier") != null,
-    cwd: process.cwd(),
+    hasTerminalNotifier: darwin && Bun.which("terminal-notifier") != null,
+    // Focus the exact open workspace window that contains cwd (from the editor's own state),
+    // not a deep cwd or a mis-guessed git root that would spawn a duplicate window.
+    cwd: darwin ? focusFolder(cwd, readOpenFolders(process.env), gitToplevel(cwd)) : cwd,
+    editorCli: darwin ? resolveEditorCli(process.env) : undefined,
   });
   const c = notifyCommand(process.platform, title, message, opts);
   if (!c) return;
