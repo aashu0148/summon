@@ -4,16 +4,24 @@
 // terminals are distinguishable at a glance. Pure string logic, wired in app.tsx.
 
 import { oneLine } from "../lib/format.ts";
+import type { AttentionReason } from "./attention.ts";
 
-export type TitleState = { busy: boolean; label: string };
+export type TitleState = { busy: boolean; label: string; attention?: AttentionReason | null };
 
 const RUNNING = "●"; // a turn is in flight
 const IDLE = "✳"; // idle — the claude glyph
+// Two distinct attention icons so the tab tells you *which* kind at a glance:
+const ATTENTION: Record<AttentionReason, string> = {
+  blocked: "❓", // Claude is asking something / waiting on your input
+  done: "✅", // a turn finished
+};
 
-// The full title string: "<icon> <name>", never empty.
-export function buildTitle({ busy, label }: TitleState): string {
+// The full title string: "<icon> <name>", never empty. Attention wins over busy/idle so a
+// waiting session is obvious from the tab even before the user switches back to it.
+export function buildTitle({ busy, label, attention }: TitleState): string {
   const name = oneLine(label) || "summon";
-  return `${busy ? RUNNING : IDLE} ${name}`;
+  const icon = attention ? ATTENTION[attention] : busy ? RUNNING : IDLE;
+  return `${icon} ${name}`;
 }
 
 // The conversation's name: the first user message, collapsed to one line and

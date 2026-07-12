@@ -8,6 +8,9 @@ import { generateTitle } from "../../domain/title-gen.ts";
 import { saveTitle } from "../../title-store.ts";
 import { SPINNER, ZERO, PROJECT, toolActivity, toolLine, type Turn, type Ask, type Role } from "../constants.ts";
 import { relPath, fileTurnText, foldFileEdit } from "../../domain/file-edits.ts";
+import { useAttention } from "./useAttention.ts";
+import type { AttentionReason } from "../../domain/attention.ts";
+import { terminalNotifierHint } from "../../domain/notify.ts";
 
 // File-mutating tools already get a nicer "EDIT ✎ path +N −M" row via the file_change
 // event, so we don't also add a plain TOOL trace row for them (would double up).
@@ -63,6 +66,14 @@ export function useConversation() {
   const [askIdx, setAskIdx] = useState(0); // which question we're on (multi-question)
   const [otherMode, setOtherMode] = useState(false); // typing a custom "Other" answer
   const askAnsRef = useRef<{ header: string; label: string }[]>([]);
+
+  // Attention-seeking: nudge the user (bell + toast + tab-title bell) when a turn blocks or
+  // finishes while they're on another window. onEvent is a stable `useCallback([])`, so it
+  // reaches `seek` and the current tab label through refs rather than capturing them.
+  const attention = useAttention();
+  const seekRef = useRef<(reason: AttentionReason, label: string) => void>(() => {});
+  seekRef.current = attention.seek;
+  const labelRef = useRef(PROJECT); // latest tab label (chat name), kept fresh by the title effect
 
   const pushSys = (text: string) => setTurns((p) => [...p, { role: "sys", text }]);
 
@@ -120,6 +131,7 @@ export function useConversation() {
         setLive(ZERO);
         setActivity("");
         setBusy(false);
+        seekRef.current("done", labelRef.current); // turn finished — nudge if the user stepped away
         break;
       case "available_models":
         if (e.models.length) setModels(e.models);
@@ -146,6 +158,7 @@ export function useConversation() {
         setAskIdx(0);
         setOtherMode(false);
         setAsk({ requestId: e.requestId, questions: e.questions });
+        seekRef.current("blocked", labelRef.current); // blocked on the user — nudge if they stepped away
         break;
       case "control":
         setTurns((p) => [...p, { role: "err", text: `unsupported control request: ${e.subtype} (auto-continued, not hung)` }]);
@@ -185,6 +198,13 @@ export function useConversation() {
     return () => sessionRef.current?.kill();
   }, [startSession]);
 
+  // One-time hint: on macOS without terminal-notifier, mention how to enable notification
+  // click-to-focus. Shown once at startup; notifications themselves need no such install.
+  useEffect(() => {
+    const hint = terminalNotifierHint(process.platform, Bun.which("terminal-notifier") != null);
+    if (hint) pushSys(hint);
+  }, []);
+
   // One animation timer while busy: advances the spinner AND flushes the streaming /
   // thinking / usage buffers at ~16fps instead of re-rendering on every token.
   useEffect(() => {
@@ -205,8 +225,9 @@ export function useConversation() {
   // reset to just the project name so the tab isn't left mid-run.
   useEffect(() => {
     const label = genTitle || titleLabel(turns.find((x) => x.role === "you")?.text, PROJECT);
-    process.stdout.write(titleSequence(buildTitle({ busy, label })));
-  }, [busy, turns, genTitle]);
+    labelRef.current = label; // keep the label onEvent hands to seek() current
+    process.stdout.write(titleSequence(buildTitle({ busy, label, attention: attention.attention })));
+  }, [busy, turns, genTitle, attention.attention]);
   useEffect(() => () => { process.stdout.write(titleSequence(PROJECT)); }, []);
 
   // Once the first exchange is on screen, ask a cheap model to name the session so
@@ -229,6 +250,7 @@ export function useConversation() {
   // Actually hand a message to the running session and mark the turn busy. `wire`
   // goes to claude; `display` (defaults to wire) is the transcript label.
   const sendNow = (wire: string, display = wire, images?: ImageBlock[]) => {
+    attention.clear(); // user's back and acting on it — drop any pending/active nudge
     setTurns((p) => [...p, { role: "you", text: display }]);
     accRef.current = "";
     thinkRef.current = "";
@@ -264,6 +286,7 @@ export function useConversation() {
   // CLI's follow-up `result` event just no-ops (busy already false).
   const interrupt = () => {
     if (!busy) return;
+    attention.clear(); // user took control — drop any pending/active nudge
     sessionRef.current?.interrupt();
     const partial = accRef.current;
     if (partial) setTurns((p) => [...p, { role: "claude", text: partial }]);
@@ -305,7 +328,10 @@ export function useConversation() {
   };
 
   const killSession = () => sessionRef.current?.kill();
-  const answerQuestion = (requestId: string, message: string) => sessionRef.current?.answerQuestion(requestId, message);
+  const answerQuestion = (requestId: string, message: string) => {
+    attention.clear(); // user answered the blocked prompt — the session no longer needs them
+    return sessionRef.current?.answerQuestion(requestId, message);
+  };
 
   const spin = SPINNER[tick % SPINNER.length]!; // index is always in range
 

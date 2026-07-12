@@ -40,9 +40,14 @@ Four built-in themes — switch live with `/theme`.
 ```sh
 git clone <your-fork-url> summon
 cd summon
-bun install
-bun link      # exposes the `summon` command on your PATH (via ~/.bun/bin)
+bun run setup   # installs deps, exposes the `summon` command, and (macOS) sets up notifications
 ```
+
+`bun run setup` replaces the old `bun install` + `bun link`. It also installs
+[`terminal-notifier`](https://github.com/julienXX/terminal-notifier) on macOS (via Homebrew, if
+present) so that clicking a "task finished / waiting for your input" notification jumps you back
+to the exact session window. It's optional — notifications still work without it, and the step
+is skipped on Windows/Linux, which use the OS's built-in notifier.
 
 ## Usage
 

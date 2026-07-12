@@ -6,6 +6,14 @@ test("buildTitle shows a dot while busy, the glyph when idle", () => {
   expect(buildTitle({ busy: false, label: "fix the parser" })).toBe("✳ fix the parser");
 });
 
+test("buildTitle uses a distinct attention icon per reason, over busy/idle", () => {
+  expect(buildTitle({ busy: false, label: "fix the parser", attention: "done" })).toBe("✅ fix the parser");
+  expect(buildTitle({ busy: true, label: "fix the parser", attention: "blocked" })).toBe("❓ fix the parser");
+  // no attention ⇒ normal icons unchanged
+  expect(buildTitle({ busy: true, label: "fix the parser", attention: null })).toBe("● fix the parser");
+  expect(buildTitle({ busy: false, label: "fix the parser" })).toBe("✳ fix the parser");
+});
+
 test("buildTitle falls back to 'summon' for an empty label", () => {
   expect(buildTitle({ busy: false, label: "" })).toBe("✳ summon");
   expect(buildTitle({ busy: true, label: "   " })).toBe("● summon");

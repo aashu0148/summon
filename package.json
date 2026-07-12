@@ -9,6 +9,7 @@
     "summon": "./src/index.tsx"
   },
   "scripts": {
+    "setup": "bun run scripts/setup.ts",
     "start": "bun run src/index.tsx",
     "test": "bun test",
     "smoke": "bun run scripts/smoke.ts",
