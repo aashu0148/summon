@@ -110,8 +110,14 @@ export function notifyCommand(platform: NodeJS.Platform, title: string, message:
     // Preferred: terminal-notifier, so a click can focus the terminal.
     if (opts.hasTerminalNotifier) {
       const args = ["-title", title, "-message", message, "-sound", "Ping"];
-      if (opts.executeCommand) args.push("-execute", opts.executeCommand); // focus the exact window
-      else if (opts.bundleId) args.push("-activate", opts.bundleId); // fall back to app-level focus
+      // -execute focuses the exact window (its CLI selects the right one), but the shell command
+      // it runs counts as a background process to macOS's focus-stealing prevention, which
+      // suppresses the raise. -activate uses the OS-native "bring app forward" path, which the
+      // system honors from a notification click. Pass BOTH: -activate guarantees the raise,
+      // -execute lands on the correct window. (An OS update that resets terminal-notifier's trust
+      // state will otherwise silently break -execute-only clicks — see focus-stealing prevention.)
+      if (opts.executeCommand) args.push("-execute", opts.executeCommand);
+      if (opts.bundleId) args.push("-activate", opts.bundleId);
       return { cmd: "terminal-notifier", args };
     }
     // Fallback: a plain banner (no click action — osascript can't activate another app).

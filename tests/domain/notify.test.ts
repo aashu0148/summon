@@ -83,7 +83,9 @@ test("openFolderCommand runs the editor CLI on the folder, shell-quoted (spaces/
     .toBe("'/apps/x/bin/code' '/tmp/o'\\''brien'");
 });
 
-test("macOS with terminal-notifier + executeCommand focuses the exact window on click", () => {
+test("macOS with terminal-notifier + executeCommand passes BOTH -execute and -activate", () => {
+  // -execute lands on the exact window; -activate does the OS-native raise (macOS focus-stealing
+  // prevention suppresses the raise that -execute's shell command would otherwise attempt).
   const exec = `'${VSCODE_CLI}' '/repo'`;
   const c = notifyCommand("darwin", "Summon", "done", {
     hasTerminalNotifier: true,
@@ -94,8 +96,15 @@ test("macOS with terminal-notifier + executeCommand focuses the exact window on 
   expect(c.args).toEqual([
     "-title", "Summon", "-message", "done", "-sound", "Ping",
     "-execute", exec,
+    "-activate", "com.microsoft.VSCode",
   ]);
-  expect(c.args).not.toContain("-activate"); // execute takes precedence over app-level activate
+});
+
+test("macOS terminal-notifier with executeCommand but no bundleId passes only -execute", () => {
+  const exec = `'${VSCODE_CLI}' '/repo'`;
+  const c = notifyCommand("darwin", "Summon", "done", { hasTerminalNotifier: true, executeCommand: exec })!;
+  expect(c.args).toEqual(["-title", "Summon", "-message", "done", "-sound", "Ping", "-execute", exec]);
+  expect(c.args).not.toContain("-activate");
 });
 
 test("macOS terminal-notifier without an execute command falls back to app-level -activate", () => {
@@ -153,7 +162,7 @@ test("matrix · VS Code + terminal-notifier → click runs the editor CLI to foc
     editorCli: VSCODE_CLI,
   })!;
   expect(c.cmd).toBe("terminal-notifier");
-  expect(c.args.slice(-2)).toEqual(["-execute", `'${VSCODE_CLI}' '/Users/a/proj'`]);
+  expect(c.args.slice(-4)).toEqual(["-execute", `'${VSCODE_CLI}' '/Users/a/proj'`, "-activate", "com.microsoft.VSCode"]);
 });
 
 test("matrix · Cursor + terminal-notifier → runs the Cursor CLI, not VS Code's", () => {
@@ -164,7 +173,7 @@ test("matrix · Cursor + terminal-notifier → runs the Cursor CLI, not VS Code'
     cwd: "/repo",
     editorCli: CURSOR_CLI,
   })!;
-  expect(c.args.at(-1)).toBe(`'${CURSOR_CLI}' '/repo'`);
+  expect(c.args.slice(-4)).toEqual(["-execute", `'${CURSOR_CLI}' '/repo'`, "-activate", "com.todesktop.x"]);
 });
 
 test("matrix · iTerm2 (non-editor) + terminal-notifier → app-level -activate, no exact window", () => {
