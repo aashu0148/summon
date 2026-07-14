@@ -59,7 +59,11 @@ export function App() {
 
   const quit = () => {
     conv.killSession();
-    renderer?.stop();
+    // destroy() — not stop() — runs OpenTUI's terminal teardown (leave alt-screen, disable
+    // mouse, restore raw mode). stop() only halts the render loop, so the modes stayed on
+    // and scrolling after exit showed raw mouse-report gibberish. The process.on("exit")
+    // reset in index.tsx is the belt-and-suspenders backstop for any path this misses.
+    renderer?.destroy();
     process.exit(0);
   };
 

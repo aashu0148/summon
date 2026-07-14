@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useBlur, useFocus } from "@opentui/react";
+import { useFocus } from "@opentui/react";
 import { attentionMessage, attentionSequence, shouldNotify, type AttentionReason } from "../../domain/attention.ts";
 import { sendNotification } from "../../domain/notify.ts";
+import { focusState } from "../../domain/focus-state.ts";
 
 // Grace window before we actually nudge, so a quick pane switch inside an IDE (terminal →
 // editor and straight back) doesn't fire a notification. Cancelled if focus returns first.
@@ -17,8 +18,9 @@ const GRACE_MS = 1500;
 export function useAttention() {
   // null ⇒ no attention. Otherwise the reason, which picks the tab-title icon (✅ done / ❓ blocked).
   const [attention, setAttention] = useState<AttentionReason | null>(null);
-  const focusedRef = useRef(true); // assume focused until the terminal tells us otherwise
-  const liveRef = useRef(false); // has focus reporting ever fired? false ⇒ terminal can't report (e.g. Terminal.app)
+  // Focus is tracked in the focusState module, wired to OpenTUI's focus/blur in index.tsx
+  // BEFORE React mounts — so the startup focus-in event isn't missed (which used to leave us
+  // notifying even while focused). We read it; we don't own it.
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cancel = () => { if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; } };
@@ -30,21 +32,20 @@ export function useAttention() {
   };
 
   const seek = useCallback((reason: AttentionReason, label: string) => {
-    if (!shouldNotify(focusedRef.current, liveRef.current)) return; // user's watching — don't nag
+    if (!shouldNotify(focusState.focused, focusState.live)) return; // user's watching — don't nag
     const msg = attentionMessage(reason, label);
     cancel();
     // Without live focus reporting we can't detect a return, so nudge immediately; otherwise
     // wait out the grace window in case they're only glancing away for a moment.
-    if (!liveRef.current) { fire(reason, msg); return; }
-    timerRef.current = setTimeout(() => { timerRef.current = null; if (!focusedRef.current) fire(reason, msg); }, GRACE_MS);
+    if (!focusState.live) { fire(reason, msg); return; }
+    timerRef.current = setTimeout(() => { timerRef.current = null; if (!focusState.focused) fire(reason, msg); }, GRACE_MS);
   }, []);
 
-  // Any focus/blur event proves the terminal reports focus, so we can start trusting it.
-  // On refocus we cancel a still-pending grace nudge and stop treating the user as away, but
-  // we deliberately DON'T drop an already-raised bell — the title keeps flagging that the
+  // On refocus, cancel a still-pending grace nudge — the user's back before it fired. (The
+  // focusState the decision reads is updated by index.tsx's listener, which runs first.) We
+  // deliberately DON'T drop an already-raised bell — the title keeps flagging that the
   // session needs attention until the user actually acts on it (sends / answers).
-  useFocus(() => { liveRef.current = true; focusedRef.current = true; cancel(); });
-  useBlur(() => { liveRef.current = true; focusedRef.current = false; });
+  useFocus(() => cancel());
 
   useEffect(() => cancel, []); // drop any pending timer on unmount
 
