@@ -97,14 +97,27 @@ export function expandSkill(skill: Skill, args: string): string {
   );
 }
 
+// Position-preserving variant: the skill instructions are spliced in where the
+// `/name` token actually sat, so text before the token leads and text after it
+// trails — a mid-message "make X /design" reads as "make X" → skill → (nothing),
+// instead of hoisting the request behind the whole skill body. With no
+// surrounding text this collapses to the bare instruction block. Exported for tests.
+export function expandSkillInline(skill: Skill, before: string, after: string): string {
+  const invocation =
+    `Use the "${skill.name}" skill (from ${skill.dir}). Follow its instructions:\n\n${skill.body}`;
+  return [before.trim(), invocation, after.trim()].filter(Boolean).join("\n\n");
+}
+
 /** Adapt discovered skills to the Command shape so hints + dispatch treat them uniformly. */
 export function skillsAsCommands(skills: Skill[]): Command[] {
   return skills.map((s) => ({
     name: s.name,
     description: s.description || `skill · ${s.source}`,
-    run: (args: string, ctx: CommandCtx) => {
-      const shown = `/${s.name}${args.trim() ? " " + args.trim() : ""}`;
-      ctx.sendPrompt(expandSkill(s, args), shown);
+    run: (args: string, ctx: CommandCtx, pos?: { before: string; after: string }) => {
+      const before = pos?.before ?? "";
+      const after = pos?.after ?? args;
+      const shown = [before, `/${s.name}`, after].map((p) => p.trim()).filter(Boolean).join(" ");
+      ctx.sendPrompt(expandSkillInline(s, before, after), shown);
     },
   }));
 }

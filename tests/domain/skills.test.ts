@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadSkills, parseFrontmatter, expandSkill, skillsAsCommands, type Skill } from "../../src/domain/skills.ts";
+import { loadSkills, parseFrontmatter, expandSkill, expandSkillInline, skillsAsCommands, type Skill } from "../../src/domain/skills.ts";
 import type { CommandCtx } from "../../src/domain/commands.ts";
 
 // Write a SKILL.md at <root>/skills/<slug>/SKILL.md.
@@ -84,6 +84,18 @@ describe("expandSkill / skillsAsCommands", () => {
     expect(out).toContain("in French");
   });
 
+  test("expandSkillInline splices instructions where the token sat (before leads, after trails)", () => {
+    const out = expandSkillInline(skill, "make me a landing page", "");
+    // request text comes first, then the skill body — not hoisted behind it
+    expect(out.indexOf("make me a landing page")).toBeLessThan(out.indexOf("Say hello warmly."));
+  });
+
+  test("expandSkillInline collapses to the bare instructions with no surrounding text", () => {
+    const out = expandSkillInline(skill, "", "");
+    expect(out.startsWith('Use the "greet" skill')).toBe(true);
+    expect(out).toContain("Say hello warmly.");
+  });
+
   test("skillsAsCommands.run forwards expanded prompt with a short display label", () => {
     const calls: { wire: string; display?: string }[] = [];
     const ctx = { sendPrompt: (wire: string, display?: string) => calls.push({ wire, display }) } as unknown as CommandCtx;
@@ -93,6 +105,16 @@ describe("expandSkill / skillsAsCommands", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]!.display).toBe("/greet loudly"); // short label, not the full body
     expect(calls[0]!.wire).toContain("Say hello warmly."); // full instructions on the wire
+  });
+
+  test("skillsAsCommands.run preserves mid-message position from pos", () => {
+    const calls: { wire: string; display?: string }[] = [];
+    const ctx = { sendPrompt: (wire: string, display?: string) => calls.push({ wire, display }) } as unknown as CommandCtx;
+    const cmd = skillsAsCommands([skill])[0]!;
+    cmd.run("make me a landing page", ctx, { before: "make me a landing page", after: "" });
+    expect(calls[0]!.display).toBe("make me a landing page /greet"); // label mirrors what was typed
+    const wire = calls[0]!.wire;
+    expect(wire.indexOf("make me a landing page")).toBeLessThan(wire.indexOf("Say hello warmly."));
   });
 
   test("empty description falls back to the source origin", () => {

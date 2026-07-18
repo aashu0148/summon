@@ -50,11 +50,14 @@ export function formatUsage(u: { input: number; output: number; cacheRead: numbe
   ].join("\n");
 }
 
+/** Where a mid-message command token sat: the text before and after it, in original order. */
+export type CommandPos = { before: string; after: string };
+
 export type Command = {
   name: string;
   aliases?: string[];
   description: string;
-  run: (args: string, ctx: CommandCtx) => void;
+  run: (args: string, ctx: CommandCtx, pos?: CommandPos) => void;
 };
 
 export const COMMANDS: Command[] = [
@@ -197,7 +200,7 @@ function indexByName(commands: Command[]): Map<string, Command> {
 export function findInlineCommand(
   input: string,
   index: Map<string, Command>,
-): { cmd: Command; args: string } | null {
+): { cmd: Command; args: string; pos: CommandPos } | null {
   const re = /(^|\s)\/([A-Za-z0-9_-]+)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(input))) {
@@ -209,7 +212,7 @@ export function findInlineCommand(
     const before = input.slice(0, tokenStart).trim();
     const after = input.slice(tokenEnd).trim();
     const args = [before, after].filter(Boolean).join(" ");
-    return { cmd, args };
+    return { cmd, args, pos: { before, after } };
   }
   return null;
 }
@@ -235,11 +238,12 @@ export function dispatchCommand(input: string, ctx: CommandCtx, commands: Comman
       ctx.print(`unknown command: /${name}  ·  try /help`);
       return true;
     }
-    cmd.run(rest.join(" "), ctx);
+    const args = rest.join(" ");
+    cmd.run(args, ctx, { before: "", after: args });
     return true;
   }
   const inline = findInlineCommand(trimmed, index);
   if (!inline) return false;
-  inline.cmd.run(inline.args, ctx);
+  inline.cmd.run(inline.args, ctx, inline.pos);
   return true;
 }

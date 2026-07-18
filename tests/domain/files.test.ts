@@ -14,10 +14,14 @@ beforeAll(() => {
   cwd = join(root, "proj");
   mkdirSync(join(cwd, "src"), { recursive: true });
   mkdirSync(join(cwd, ".claude"), { recursive: true });
+  mkdirSync(join(cwd, ".git"), { recursive: true });
+  mkdirSync(join(cwd, "node_modules", "dep"), { recursive: true });
   mkdirSync(join(root, "sibling"), { recursive: true });
   writeFileSync(join(cwd, "src", "app.ts"), "");
   writeFileSync(join(cwd, "readme.md"), "");
   writeFileSync(join(cwd, ".claude", "config.md"), "");
+  writeFileSync(join(cwd, ".git", "HEAD"), ""); // must NOT be walked into
+  writeFileSync(join(cwd, "node_modules", "dep", "index.js"), ""); // must NOT be walked into
   writeFileSync(join(root, "sibling", "note.md"), "");
 });
 
@@ -30,9 +34,36 @@ test("splitQueryDir separates the directory prefix from the fragment", () => {
   expect(splitQueryDir("../../src/ap")).toEqual({ dir: "../../src/", frag: "ap" });
 });
 
-test("listProjectFiles stays within the project root", () => {
+test("listProjectFiles stays within the project root, listing folders and files", () => {
   const files = listProjectFiles(cwd);
-  expect(files.sort()).toEqual([join("src", "app.ts"), "readme.md"].sort());
+  // node_modules surfaces as a folder but is NOT descended into (no dep/index.js);
+  // hidden .git/.claude are excluded from a plain listing.
+  expect(files.sort()).toEqual(["src/", "node_modules/", join("src", "app.ts"), "readme.md"].sort());
+});
+
+test("heavy dirs surface as a folder but are never walked into", () => {
+  const files = listProjectFiles(cwd);
+  expect(files).toContain("node_modules/");
+  expect(files).not.toContain(join("node_modules", "dep", "index.js"));
+});
+
+test("a hidden heavy dir (.git) surfaces on a dot query without being walked into", () => {
+  const files = listFilesForQuery(cwd, ".gi");
+  expect(files).toContain(".git/");
+  expect(files).not.toContain(join(".git", "HEAD"));
+  expect(matchFiles(files, ".gi")[0]).toBe(".git/");
+});
+
+test("folders are surfaced as mention targets with a trailing slash", () => {
+  const files = listFilesForQuery(cwd, "sr");
+  expect(files).toContain("src/");
+  expect(matchFiles(files, "sr")[0]).toBe("src/");
+});
+
+test("a dot fragment surfaces the hidden folder itself, not just its contents", () => {
+  const files = listFilesForQuery(cwd, ".cla");
+  expect(files).toContain(".claude/");
+  expect(matchFiles(files, ".cla")).toContain(".claude/");
 });
 
 test("listFilesForQuery without a dir prefix matches the cwd-rooted list", () => {

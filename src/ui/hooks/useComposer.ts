@@ -63,7 +63,9 @@ export function useComposer(allCommands: Command[]) {
 
   const clearAttachments = () => { setAttachments([]); attachSeq.current = 0; };
 
-  // Tab/Enter completes the trailing @token to the highlighted file suggestion.
+  // Tab/Enter completes the trailing @token to the highlighted suggestion. A folder pick
+  // (path ends with "/") drills in: no trailing space, and we re-run the mention listing so
+  // the menu now shows that folder's contents. A file pick commits with a trailing space.
   const acceptMention = () => {
     const path = fileHints[fileSel] ?? fileHints[0];
     if (!path) return;
@@ -71,12 +73,12 @@ export function useComposer(allCommands: Command[]) {
     const m = d.match(MENTION_RE);
     if (!m) return;
     const token = "@" + (m[1] ?? "");
-    const next = d.slice(0, d.length - token.length) + "@" + path + " ";
-    setDraft(next);
-    draftRef.current = next;
+    const isDir = path.endsWith("/");
+    const next = d.slice(0, d.length - token.length) + "@" + path + (isDir ? "" : " ");
     setInputInit(next);
     setInputKey((k) => k + 1);
-    setFileHints([]);
+    if (isDir) onDraft(next); // refresh hints to browse inside the folder
+    else { setDraft(next); draftRef.current = next; setFileHints([]); }
   };
 
   // Tab/Enter completes the /token to the highlighted command or skill and drops it
