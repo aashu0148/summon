@@ -101,7 +101,8 @@ export const ZERO: Usage = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 }
 export const PROJECT = "summon";
 
 // Sentinel value for the always-appended "Other…" answer in an AskUserQuestion prompt.
-export const OTHER = "__other__";
+// Defined in domain/ask.ts (the pure logic) and re-exported here for the UI layer.
+export { OTHER } from "../domain/ask.ts";
 
 // The dir we're running claude in (fixed for the process). ~-relative, trailing-trimmed.
 export const CWD = (() => {

@@ -132,6 +132,34 @@ describe("line parsing", () => {
     expect(only(events, "file_change")).toEqual([]);
   });
 
+  test("AskUserQuestion control_request → ask event carrying questions (multiSelect preserved)", () => {
+    const { events, feed } = harness();
+    feed({
+      type: "control_request",
+      request_id: "req-9",
+      request: {
+        subtype: "can_use_tool",
+        tool_name: "AskUserQuestion",
+        input: {
+          questions: [
+            { question: "Pick toppings", header: "Toppings", options: [{ label: "Cheese" }], multiSelect: true },
+            { question: "Pick one size", header: "Size", options: [{ label: "L" }] },
+          ],
+        },
+      },
+    });
+    expect(only(events, "ask")).toEqual([
+      {
+        type: "ask",
+        requestId: "req-9",
+        questions: [
+          { question: "Pick toppings", header: "Toppings", options: [{ label: "Cheese" }], multiSelect: true },
+          { question: "Pick one size", header: "Size", options: [{ label: "L" }] },
+        ],
+      },
+    ]);
+  });
+
   test("rate_limit_event → rate_limit", () => {
     const { events, feed } = harness();
     feed({ type: "rate_limit_event", rate_limit_info: { rateLimitType: "five_hour", status: "allowed" } });

@@ -100,7 +100,7 @@ export function App() {
   // by the Ctrl+V binding and the empty-paste path — real terminals don't deliver image
   // bytes on Cmd+V, so we read the clipboard directly like Claude Code does.
   const attachClipboardImage = () => {
-    if (overlay || conv.ask || usageOpen) return;
+    if (pickerOverlay || conv.ask || usageOpen) return;
     void readClipboardImage().then((img) => { if (img) composer.addAttachment(img); });
   };
 
@@ -185,8 +185,10 @@ export function App() {
   const model = shortModel(conv.status.model);
   const hud = `↑${fmtTok(conv.live.input)} ↓${fmtTok(conv.live.output)}`;
   const askQ = askFlow.askQ;
+  // Claude's question docks as a bottom panel (conversation stays visible); the
+  // /model /theme /resume pickers and usage panel still take the full pane.
   const askOverlay = askFlow.askOverlay({ otherMode: conv.otherMode });
-  const overlay = askOverlay ?? pickers.pickerOverlay;
+  const pickerOverlay = pickers.pickerOverlay;
 
   return (
     <box
@@ -199,31 +201,47 @@ export function App() {
       // scrollbox), so we preventDefault to suppress that walk and focus the input instead.
       // Skip while an overlay/answer picker owns focus so we don't yank it away.
       onMouseDown={(e) => {
-        if (overlay || conv.ask || usageOpen) return;
+        if (pickerOverlay || conv.ask || usageOpen) return;
         e.preventDefault();
         composer.taRef.current?.focus();
       }}
     >
       <Header t={t} />
 
-      {/* conversation — or an overlay (free-text answer / select / picker) */}
-      {conv.ask && askQ && conv.otherMode ? (
-        <OtherInput t={t} askQ={askQ} onSubmit={askFlow.submitOther} />
-      ) : overlay ? (
-        <OverlaySelect key={overlay.title} t={t} title={overlay.title} options={overlay.options} onSelect={overlay.onSelect} />
-      ) : usageOpen ? (
+      {/* Full-pane views: the usage panel and the /model /theme /resume pickers. Otherwise
+          the conversation stays on screen and Claude's question docks below it as a panel
+          (free-text answer / single- or multi-select) so the messages stay readable. */}
+      {usageOpen ? (
         <UsagePanel t={t} usage={usage.usage!} now={Date.now()} />
+      ) : pickerOverlay ? (
+        <OverlaySelect key={pickerOverlay.title} t={t} title={pickerOverlay.title} options={pickerOverlay.options} onSelect={pickerOverlay.onSelect} />
       ) : (
-        <Conversation
-          t={t}
-          turns={conv.turns}
-          streaming={conv.streaming}
-          thinking={conv.thinking}
-          busy={conv.busy}
-          spin={conv.spin}
-          activity={conv.activity}
-          hud={hud}
-        />
+        <>
+          <Conversation
+            t={t}
+            turns={conv.turns}
+            streaming={conv.streaming}
+            thinking={conv.thinking}
+            busy={conv.busy}
+            spin={conv.spin}
+            activity={conv.activity}
+            hud={hud}
+          />
+          {conv.ask && askQ && conv.otherMode ? (
+            <OtherInput panel t={t} askQ={askQ} onSubmit={askFlow.submitOther} />
+          ) : askOverlay ? (
+            <OverlaySelect
+              panel
+              key={askOverlay.title}
+              t={t}
+              title={askOverlay.title}
+              options={askOverlay.options}
+              multiSelect={askOverlay.multiSelect}
+              onSelect={askOverlay.onSelect}
+              onConfirm={askOverlay.onConfirm}
+            />
+          ) : null}
+        </>
       )}
 
       <HintsPanel
@@ -232,7 +250,7 @@ export function App() {
         fileSel={composer.fileSel}
         hints={composer.hints}
         cmdSel={composer.cmdSel}
-        hasOverlay={!!overlay || usageOpen}
+        hasOverlay={!!pickerOverlay || usageOpen}
         hasAsk={!!conv.ask}
       />
 
@@ -244,7 +262,7 @@ export function App() {
         t={t}
         busy={conv.busy}
         spin={conv.spin}
-        focused={!overlay && !conv.ask && !usageOpen}
+        focused={!pickerOverlay && !conv.ask && !usageOpen}
         inputKey={composer.inputKey}
         inputInit={composer.inputInit}
         taRef={composer.taRef}

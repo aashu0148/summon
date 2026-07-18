@@ -7,6 +7,7 @@ import { buildTitle, titleLabel, titleSequence } from "../../domain/title.ts";
 import { generateTitle } from "../../domain/title-gen.ts";
 import { saveTitle } from "../../title-store.ts";
 import { SPINNER, ZERO, PROJECT, toolActivity, toolLine, type Turn, type Ask, type Role } from "../constants.ts";
+import type { AskAnswer } from "../../domain/ask.ts";
 import { relPath, fileTurnText, foldFileEdit } from "../../domain/file-edits.ts";
 import { useAttention } from "./useAttention.ts";
 import type { AttentionReason } from "../../domain/attention.ts";
@@ -65,7 +66,7 @@ export function useConversation() {
   const [ask, setAsk] = useState<Ask | null>(null); // active AskUserQuestion prompt
   const [askIdx, setAskIdx] = useState(0); // which question we're on (multi-question)
   const [otherMode, setOtherMode] = useState(false); // typing a custom "Other" answer
-  const askAnsRef = useRef<{ header: string; label: string }[]>([]);
+  const askAnsRef = useRef<AskAnswer[]>([]);
 
   // Attention-seeking: nudge the user (bell + toast + tab-title bell) when a turn blocks or
   // finishes while they're on another window. onEvent is a stable `useCallback([])`, so it
