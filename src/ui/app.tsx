@@ -153,9 +153,16 @@ export function App() {
       else if (pickers.picker) pickers.closePicker();
       else if (conv.busy) conv.interrupt(); // stop the in-progress turn
     } else if (!pickers.picker && !conv.ask && !composer.draftRef.current.includes("\n") && (key.name === "up" || key.name === "down")) {
-      // Shell-style history recall on the main input — only when it's a single line
-      // (multi-line drafts let the textarea move the cursor between lines instead).
-      composer.recall(key.name);
+      // ↑ on an empty draft with messages queued pulls the newest queued item back into
+      // the input for editing (it leaves the queue). Otherwise: shell-style history
+      // recall — only when the draft is a single line (multi-line drafts let the
+      // textarea move the cursor between lines instead).
+      if (key.name === "up" && !composer.draftRef.current && conv.queue.length) {
+        const it = conv.popQueued();
+        if (it) composer.refill(it.wire, it.images);
+      } else {
+        composer.recall(key.name);
+      }
     }
   });
 

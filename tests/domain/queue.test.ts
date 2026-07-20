@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { routeMessage, enqueue, drain, previewLine, formatQueueLine, type QueueItem } from "../../src/domain/queue.ts";
+import { routeMessage, enqueue, drain, popLast, previewLine, formatQueueLine, type QueueItem } from "../../src/domain/queue.ts";
 
 const item = (s: string): QueueItem => ({ wire: s, display: s });
 
@@ -61,6 +61,52 @@ describe("drain", () => {
       d = drain(false, q); // simulates a turn finishing each time (busy=false)
     }
     expect(sent).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("popLast (↑ recalls the newest queued message)", () => {
+  test("pops the tail — the most recently queued item — and returns the rest", () => {
+    const p = popLast([item("a"), item("b"), item("c")]);
+    expect(p?.item.wire).toBe("c");
+    expect(p?.rest.map((i) => i.wire)).toEqual(["a", "b"]);
+  });
+  test("returns null when the queue is empty", () => {
+    expect(popLast([])).toBeNull();
+  });
+  test("does not mutate the input queue", () => {
+    const q = [item("a"), item("b")];
+    popLast(q);
+    expect(q.map((i) => i.wire)).toEqual(["a", "b"]);
+  });
+  test("carries the wire/display split and images out intact", () => {
+    const images = [{ type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } }] as const;
+    const p = popLast([item("a"), { wire: "look [Image #1]", display: "look", images: [...images] }]);
+    expect(p?.item).toEqual({ wire: "look [Image #1]", display: "look", images: [...images] });
+  });
+  test("popping repeatedly recalls newest-first, like shell history", () => {
+    let q = [item("a"), item("b"), item("c")];
+    const recalled: string[] = [];
+    let p = popLast(q);
+    while (p) {
+      recalled.push(p.item.wire);
+      q = p.rest;
+      p = popLast(q);
+    }
+    expect(recalled).toEqual(["c", "b", "a"]);
+  });
+});
+
+describe("interrupt keeps the queue alive (Esc mid-turn)", () => {
+  // Esc sends the CLI an interrupt but the turn stays busy until the CLI's `result`
+  // event confirms the abort. The queue must survive that window untouched and drain
+  // normally afterward — Esc kills only the in-flight turn, never the queued messages.
+  test("no drain while the interrupt is still in flight (busy)", () => {
+    expect(drain(true, [item("queued-1"), item("queued-2")])).toBeNull();
+  });
+  test("once the interrupt's result lands (busy=false) the queue drains FIFO from the head", () => {
+    const d = drain(false, [item("queued-1"), item("queued-2")]);
+    expect(d?.next.wire).toBe("queued-1");
+    expect(d?.rest.map((i) => i.wire)).toEqual(["queued-2"]);
   });
 });
 

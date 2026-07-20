@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ClaudeSession, type SessionEvent, type Usage } from "../../session/claude-session.ts";
 import { listSessions, loadTranscript } from "../../domain/sessions.ts";
-import { routeMessage, enqueue, drain, type QueueItem } from "../../domain/queue.ts";
+import { routeMessage, enqueue, drain, popLast, type QueueItem } from "../../domain/queue.ts";
 import type { ImageBlock } from "../../domain/content.ts";
 import { buildTitle, titleLabel, titleSequence } from "../../domain/title.ts";
 import { generateTitle } from "../../domain/title-gen.ts";
@@ -44,6 +44,7 @@ export function useConversation() {
   const usageDirtyRef = useRef(false);
   const activityDirtyRef = useRef(false);
   const modelRef = useRef<string | undefined>(loadConfig().model); // last chosen model, kept across /new and restarts
+  const interruptingRef = useRef(false); // Esc pressed, waiting for the CLI's confirming result
   const titleFiredRef = useRef(false); // one-shot guard for the title generation call
   const sessionIdRef = useRef(""); // full id of the live session, for persisting its title
 
@@ -121,6 +122,7 @@ export function useConversation() {
         setThinking("");
         break;
       case "result":
+        interruptingRef.current = false; // covers the interrupt-confirming result too
         setStatus((p) => ({ ...p, cost: e.costUsd }));
         setSessionTok((p) => ({
           input: p.input + e.usage.input,
@@ -169,6 +171,7 @@ export function useConversation() {
         setTurns((p) => [...p, { role: "err", text: e.message }]);
         break;
       case "exit":
+        interruptingRef.current = false;
         setBusy(false);
         break;
     }
@@ -185,6 +188,7 @@ export function useConversation() {
     setThinking("");
     setLive(ZERO);
     setActivity("");
+    interruptingRef.current = false;
     setQueue([]); // fresh session — drop anything queued against the old one
     setGenTitle(""); // fresh session — regenerate the tab title from its first exchange
     titleFiredRef.current = false;
@@ -283,11 +287,16 @@ export function useConversation() {
     sendNow(wire, display, images);
   };
 
-  // Esc while busy: abort the current turn. Flush whatever streamed so far into a
-  // turn so the partial answer isn't lost, then hand control back to the user. The
-  // CLI's follow-up `result` event just no-ops (busy already false).
+  // Esc while busy: abort ONLY the current turn. Flush whatever streamed so far into
+  // a turn so the partial answer isn't lost. Busy stays true until the CLI answers the
+  // interrupt with its `result` event — flipping it here made the drain effect fire
+  // immediately and write the next queued message into a session still mid-abort, where
+  // it was swallowed; the app then sat busy forever and the whole queue looked dead.
+  // The result lands moments later, flips busy, and the drain effect sends the next
+  // queued message into a session that's actually ready for it.
   const interrupt = () => {
-    if (!busy) return;
+    if (!busy || interruptingRef.current) return; // one interrupt per turn — Esc spam would dup sys lines
+    interruptingRef.current = true;
     attention.clear(); // user took control — drop any pending/active nudge
     sessionRef.current?.interrupt();
     const partial = accRef.current;
@@ -299,8 +308,16 @@ export function useConversation() {
     setStreaming("");
     setThinking("");
     setActivity("");
-    setBusy(false);
     pushSys("interrupted — turn stopped.");
+  };
+
+  // ↑ on an empty composer: pull the newest queued message back out for editing.
+  // The pure tail-pop lives in domain/queue.ts; this just applies it to state.
+  const popQueued = (): QueueItem | null => {
+    const p = popLast(queue);
+    if (!p) return null;
+    setQueue(p.rest);
+    return p.item;
   };
 
   const clear = () => setTurns([]);
@@ -344,6 +361,6 @@ export function useConversation() {
     // AskUserQuestion state (handlers are composed in useAskFlow)
     ask, setAsk, askIdx, setAskIdx, otherMode, setOtherMode, askAnsRef,
     // actions
-    pushSys, enqueueOrSend, interrupt, clear, newSession, resume, setModelRuntime, killSession, answerQuestion,
+    pushSys, enqueueOrSend, interrupt, popQueued, clear, newSession, resume, setModelRuntime, killSession, answerQuestion,
   };
 }

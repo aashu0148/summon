@@ -14,6 +14,13 @@ export type Ask = { requestId: string; questions: AskQuestion[] };
 
 // Main input keybindings: Enter submits, Shift+Enter inserts a newline (default is the
 // reverse). We start from the defaults so all editing keys keep working.
+//
+// Shift+Enter reaches us in TWO encodings depending on the terminal:
+//  - kitty keyboard protocol (Ghostty, kitty, WezTerm): a real `return` + shift:true.
+//  - ESC CR, i.e. meta+return (iTerm2 / VS Code / Cursor as configured by Claude Code's
+//    /terminal-setup, and plain Option+Enter): OpenTUI's default binds meta+return to
+//    SUBMIT, which made Shift+Enter send the message in those terminals. Override both
+//    encodings to newline so Shift+Enter behaves the same everywhere.
 export const INPUT_KEYBINDINGS = [
   ...defaultTextareaKeyBindings.filter(
     (b) => !((b.name === "return" || b.name === "kpenter" || b.name === "linefeed") && b.action === "newline"),
@@ -21,6 +28,8 @@ export const INPUT_KEYBINDINGS = [
   { name: "return", action: "submit" },
   { name: "kpenter", action: "submit" },
   { name: "return", shift: true, action: "newline" },
+  { name: "return", meta: true, action: "newline" },
+  { name: "kpenter", meta: true, action: "newline" },
 ] as typeof defaultTextareaKeyBindings;
 
 export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];

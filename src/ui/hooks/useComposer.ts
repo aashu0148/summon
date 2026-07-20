@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { matchCommands, completeCommand, type Command } from "../../domain/commands.ts";
 import { fileListKey, listFilesForQuery, matchFiles } from "../../domain/files.ts";
-import { imageMarker, type ImageAttachment } from "../../domain/content.ts";
+import { fromImageBlock, imageMarker, type ImageAttachment, type ImageBlock } from "../../domain/content.ts";
 import { MENTION_RE } from "../constants.ts";
 
 /**
@@ -131,6 +131,19 @@ export function useComposer(allCommands: Command[]) {
     setInputInit(v); setDraft(v); draftRef.current = v; setInputKey((k) => k + 1);
   };
 
+  // Refill the input with a message pulled back from the queue (↑ on an empty draft):
+  // restore its text and turn its wire-format image blocks back into attachments so a
+  // resend carries them again. Same remount trick as recall.
+  const refill = (text: string, images: ImageBlock[] = []) => {
+    setAttachments(images.map((b, i) => fromImageBlock(b, i + 1)));
+    attachSeq.current = images.length;
+    setDraft(text);
+    draftRef.current = text;
+    setInputInit(text);
+    setInputKey((k) => k + 1);
+    histIdxRef.current = null; // editing a queued message, not browsing history
+  };
+
   // Clear the input on submit (remount → empty) and drop back to a live history line.
   const clearForSubmit = () => {
     setDraft("");
@@ -155,6 +168,6 @@ export function useComposer(allCommands: Command[]) {
   return {
     draft, draftRef, hints, fileHints, fileSel, cmdSel, inputKey, inputInit, taRef, attachments,
     onDraft, acceptMention, acceptCommand, navigateFiles, navigateHints,
-    dismissFiles, dismissHints, recall, clearForSubmit, recordHistory, addAttachment,
+    dismissFiles, dismissHints, recall, refill, clearForSubmit, recordHistory, addAttachment,
   };
 }

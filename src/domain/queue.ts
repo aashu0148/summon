@@ -32,6 +32,16 @@ export function drain(
   return { next: queue[0]!, rest: queue.slice(1) };
 }
 
+// ↑ in an empty composer pulls the newest queued message back out so the user can
+// edit or resend it. Pops the TAIL (most recently queued), mirroring shell history.
+// Returns null when there's nothing queued.
+export function popLast(
+  queue: QueueItem[],
+): { item: QueueItem; rest: QueueItem[] } | null {
+  if (queue.length === 0) return null;
+  return { item: queue[queue.length - 1]!, rest: queue.slice(0, -1) };
+}
+
 // One-line preview for the queue display: whitespace collapsed, capped in length.
 export function previewLine(display: string, max = 72): string {
   const one = display.replace(/\s+/g, " ").trim();
