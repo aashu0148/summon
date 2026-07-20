@@ -12,6 +12,7 @@ import { relPath, fileTurnText, foldFileEdit } from "../../domain/file-edits.ts"
 import { useAttention } from "./useAttention.ts";
 import type { AttentionReason } from "../../domain/attention.ts";
 import { terminalNotifierHint } from "../../domain/notify.ts";
+import { loadConfig, saveConfig } from "../../config.ts";
 
 // File-mutating tools already get a nicer "EDIT ✎ path +N −M" row via the file_change
 // event, so we don't also add a plain TOOL trace row for them (would double up).
@@ -42,7 +43,7 @@ export function useConversation() {
   const thinkDirtyRef = useRef(false);
   const usageDirtyRef = useRef(false);
   const activityDirtyRef = useRef(false);
-  const modelRef = useRef<string | undefined>(undefined); // last chosen model, kept across /new
+  const modelRef = useRef<string | undefined>(loadConfig().model); // last chosen model, kept across /new and restarts
   const titleFiredRef = useRef(false); // one-shot guard for the title generation call
   const sessionIdRef = useRef(""); // full id of the live session, for persisting its title
 
@@ -323,6 +324,7 @@ export function useConversation() {
 
   const setModelRuntime = (alias: string) => {
     modelRef.current = alias;
+    saveConfig({ model: alias }); // persist so new chats/restarts keep the choice
     sessionRef.current?.setModel(alias); // runtime switch, keeps context
     setStatus((p) => ({ ...p, model: alias }));
     pushSys(`switching model → ${alias}…`);
