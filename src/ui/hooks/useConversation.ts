@@ -60,7 +60,7 @@ export function useConversation() {
   const [activity, setActivity] = useState(""); // ephemeral status label (current tool)
   const [sessionTok, setSessionTok] = useState<Usage>(ZERO);
   const [models, setModels] = useState<string[]>([]);
-  const [status, setStatus] = useState({ model: "—", cost: 0, session: "—" });
+  const [status, setStatus] = useState({ model: modelRef.current ?? "—", cost: 0, session: "—" });
   const [genTitle, setGenTitle] = useState(""); // model-named session title (empty until generated)
   // AskUserQuestion state. It lives here (not in useAskFlow) because the stable onEvent
   // reducer must be able to set it, and only useState setters are stable enough to be
