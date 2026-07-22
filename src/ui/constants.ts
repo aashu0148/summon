@@ -4,7 +4,7 @@ import type { Usage, AskQuestion } from "../session/claude-session.ts";
 import type { Theme } from "./theme.ts";
 import type { FileEdit } from "../domain/file-edits.ts";
 
-export type Role = "you" | "claude" | "sys" | "err" | "file" | "write" | "tool";
+export type Role = "you" | "claude" | "ask" | "sys" | "err" | "file" | "write" | "tool" | "usage";
 // `file` rows carry their accumulated edit so a following same-file edit can fold into
 // them (see foldFileEdit) rather than re-parsing the counts back out of `text`.
 export type Turn = { role: Role; text: string; file?: FileEdit };
@@ -14,6 +14,13 @@ export type Ask = { requestId: string; questions: AskQuestion[] };
 
 // Main input keybindings: Enter submits, Shift+Enter inserts a newline (default is the
 // reverse). We start from the defaults so all editing keys keep working.
+//
+// Shift+Enter reaches us in TWO encodings depending on the terminal:
+//  - kitty keyboard protocol (Ghostty, kitty, WezTerm): a real `return` + shift:true.
+//  - ESC CR, i.e. meta+return (iTerm2 / VS Code / Cursor as configured by Claude Code's
+//    /terminal-setup, and plain Option+Enter): OpenTUI's default binds meta+return to
+//    SUBMIT, which made Shift+Enter send the message in those terminals. Override both
+//    encodings to newline so Shift+Enter behaves the same everywhere.
 export const INPUT_KEYBINDINGS = [
   ...defaultTextareaKeyBindings.filter(
     (b) => !((b.name === "return" || b.name === "kpenter" || b.name === "linefeed") && b.action === "newline"),
@@ -21,6 +28,8 @@ export const INPUT_KEYBINDINGS = [
   { name: "return", action: "submit" },
   { name: "kpenter", action: "submit" },
   { name: "return", shift: true, action: "newline" },
+  { name: "return", meta: true, action: "newline" },
+  { name: "kpenter", meta: true, action: "newline" },
 ] as typeof defaultTextareaKeyBindings;
 
 export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -89,11 +98,11 @@ export function groupTurns(turns: Turn[]): TurnGroup[] {
   return groups;
 }
 
-export const LABEL_TEXT: Record<Role, string> = { you: "YOU", claude: "CLAUDE", sys: "SYS", err: "ERR", file: "EDIT", write: "WRITE", tool: "TOOL" };
+export const LABEL_TEXT: Record<Role, string> = { you: "YOU", claude: "CLAUDE", ask: "ASK", sys: "SYS", err: "ERR", file: "EDIT", write: "WRITE", tool: "TOOL", usage: "⚠  USAGE LIMIT" };
 export const labelFg = (t: Theme, role: Role) =>
-  role === "you" ? t.user : role === "claude" ? t.accent : role === "sys" ? t.sys : role === "file" || role === "write" ? t.ok : role === "tool" ? t.accentDim : t.warn;
+  role === "you" ? t.user : role === "claude" ? t.accent : role === "ask" ? t.sys : role === "sys" ? t.sys : role === "file" || role === "write" ? t.ok : role === "tool" ? t.accentDim : t.warn;
 export const bodyFg = (t: Theme, role: Role) =>
-  role === "claude" ? t.ink : role === "err" ? t.warn : role === "file" || role === "write" ? t.ok : role === "tool" ? t.accentDim : t.muted;
+  role === "claude" || role === "ask" ? t.ink : role === "err" ? t.warn : role === "file" || role === "write" ? t.ok : role === "tool" ? t.accentDim : role === "usage" ? t.ink : t.muted;
 
 export const ZERO: Usage = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
 

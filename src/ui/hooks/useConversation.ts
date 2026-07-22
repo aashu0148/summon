@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ClaudeSession, type SessionEvent, type Usage } from "../../session/claude-session.ts";
 import { listSessions, loadTranscript } from "../../domain/sessions.ts";
-import { routeMessage, enqueue, drain, type QueueItem } from "../../domain/queue.ts";
+import { routeMessage, enqueue, drain, popLast, type QueueItem } from "../../domain/queue.ts";
 import type { ImageBlock } from "../../domain/content.ts";
 import { buildTitle, titleLabel, titleSequence } from "../../domain/title.ts";
 import { generateTitle } from "../../domain/title-gen.ts";
@@ -12,6 +12,9 @@ import { relPath, fileTurnText, foldFileEdit } from "../../domain/file-edits.ts"
 import { useAttention } from "./useAttention.ts";
 import type { AttentionReason } from "../../domain/attention.ts";
 import { terminalNotifierHint } from "../../domain/notify.ts";
+import { loadConfig, saveConfig } from "../../config.ts";
+import { fetchUsage } from "../../session/usage-client.ts";
+import { parseUsage, sessionUsageWarning } from "../../domain/usage.ts";
 
 // File-mutating tools already get a nicer "EDIT ✎ path +N −M" row via the file_change
 // event, so we don't also add a plain TOOL trace row for them (would double up).
@@ -42,7 +45,8 @@ export function useConversation() {
   const thinkDirtyRef = useRef(false);
   const usageDirtyRef = useRef(false);
   const activityDirtyRef = useRef(false);
-  const modelRef = useRef<string | undefined>(undefined); // last chosen model, kept across /new
+  const modelRef = useRef<string | undefined>(loadConfig().model); // last chosen model, kept across /new and restarts
+  const interruptingRef = useRef(false); // Esc pressed, waiting for the CLI's confirming result
   const titleFiredRef = useRef(false); // one-shot guard for the title generation call
   const sessionIdRef = useRef(""); // full id of the live session, for persisting its title
 
@@ -58,7 +62,7 @@ export function useConversation() {
   const [activity, setActivity] = useState(""); // ephemeral status label (current tool)
   const [sessionTok, setSessionTok] = useState<Usage>(ZERO);
   const [models, setModels] = useState<string[]>([]);
-  const [status, setStatus] = useState({ model: "—", cost: 0, session: "—" });
+  const [status, setStatus] = useState({ model: modelRef.current ?? "—", cost: 0, session: "—" });
   const [genTitle, setGenTitle] = useState(""); // model-named session title (empty until generated)
   // AskUserQuestion state. It lives here (not in useAskFlow) because the stable onEvent
   // reducer must be able to set it, and only useState setters are stable enough to be
@@ -77,6 +81,23 @@ export function useConversation() {
   const labelRef = useRef(PROJECT); // latest tab label (chat name), kept fresh by the title effect
 
   const pushSys = (text: string) => setTurns((p) => [...p, { role: "sys", text }]);
+  const pushUsage = (text: string) => setTurns((p) => [...p, { role: "usage", text }]);
+  // /ask replies render like a Claude turn (markdown body) but under an ASK label, so
+  // they read as a side-answer, not part of the main session — see quick-ask.ts.
+  const pushAsk = (text: string) => setTurns((p) => [...p, { role: "ask", text }]);
+
+  // Fire-and-forget usage check at session start. The OAuth usage endpoint is metadata
+  // only — it costs no tokens — so we can safely poll it on every fresh session and warn
+  // the user (once, inline) when the current session is over halfway used. Best-effort:
+  // any auth/network failure is swallowed so a session never blocks on it.
+  const warnIfUsageHigh = useCallback(async () => {
+    try {
+      const msg = sessionUsageWarning(parseUsage(await fetchUsage()), Date.now());
+      if (msg) pushUsage(msg);
+    } catch {
+      // no login / offline / expired token — stay quiet, /usage will surface the real error
+    }
+  }, []);
 
   // Stable event handler — reads/writes only refs + stable setState fns.
   const onEvent = useCallback((e: SessionEvent) => {
@@ -120,6 +141,7 @@ export function useConversation() {
         setThinking("");
         break;
       case "result":
+        interruptingRef.current = false; // covers the interrupt-confirming result too
         setStatus((p) => ({ ...p, cost: e.costUsd }));
         setSessionTok((p) => ({
           input: p.input + e.usage.input,
@@ -168,6 +190,7 @@ export function useConversation() {
         setTurns((p) => [...p, { role: "err", text: e.message }]);
         break;
       case "exit":
+        interruptingRef.current = false;
         setBusy(false);
         break;
     }
@@ -184,6 +207,7 @@ export function useConversation() {
     setThinking("");
     setLive(ZERO);
     setActivity("");
+    interruptingRef.current = false;
     setQueue([]); // fresh session — drop anything queued against the old one
     setGenTitle(""); // fresh session — regenerate the tab title from its first exchange
     titleFiredRef.current = false;
@@ -192,7 +216,8 @@ export function useConversation() {
     s.on("event", onEvent);
     sessionRef.current = s;
     s.spawn({ ...opts, model: opts.model ?? modelRef.current });
-  }, [onEvent]);
+    void warnIfUsageHigh(); // background usage nudge; never blocks the spawn
+  }, [onEvent, warnIfUsageHigh]);
 
   useEffect(() => {
     startSession();
@@ -282,11 +307,16 @@ export function useConversation() {
     sendNow(wire, display, images);
   };
 
-  // Esc while busy: abort the current turn. Flush whatever streamed so far into a
-  // turn so the partial answer isn't lost, then hand control back to the user. The
-  // CLI's follow-up `result` event just no-ops (busy already false).
+  // Esc while busy: abort ONLY the current turn. Flush whatever streamed so far into
+  // a turn so the partial answer isn't lost. Busy stays true until the CLI answers the
+  // interrupt with its `result` event — flipping it here made the drain effect fire
+  // immediately and write the next queued message into a session still mid-abort, where
+  // it was swallowed; the app then sat busy forever and the whole queue looked dead.
+  // The result lands moments later, flips busy, and the drain effect sends the next
+  // queued message into a session that's actually ready for it.
   const interrupt = () => {
-    if (!busy) return;
+    if (!busy || interruptingRef.current) return; // one interrupt per turn — Esc spam would dup sys lines
+    interruptingRef.current = true;
     attention.clear(); // user took control — drop any pending/active nudge
     sessionRef.current?.interrupt();
     const partial = accRef.current;
@@ -298,8 +328,16 @@ export function useConversation() {
     setStreaming("");
     setThinking("");
     setActivity("");
-    setBusy(false);
     pushSys("interrupted — turn stopped.");
+  };
+
+  // ↑ on an empty composer: pull the newest queued message back out for editing.
+  // The pure tail-pop lives in domain/queue.ts; this just applies it to state.
+  const popQueued = (): QueueItem | null => {
+    const p = popLast(queue);
+    if (!p) return null;
+    setQueue(p.rest);
+    return p.item;
   };
 
   const clear = () => setTurns([]);
@@ -323,6 +361,7 @@ export function useConversation() {
 
   const setModelRuntime = (alias: string) => {
     modelRef.current = alias;
+    saveConfig({ model: alias }); // persist so new chats/restarts keep the choice
     sessionRef.current?.setModel(alias); // runtime switch, keeps context
     setStatus((p) => ({ ...p, model: alias }));
     pushSys(`switching model → ${alias}…`);
@@ -342,6 +381,6 @@ export function useConversation() {
     // AskUserQuestion state (handlers are composed in useAskFlow)
     ask, setAsk, askIdx, setAskIdx, otherMode, setOtherMode, askAnsRef,
     // actions
-    pushSys, enqueueOrSend, interrupt, clear, newSession, resume, setModelRuntime, killSession, answerQuestion,
+    pushSys, pushAsk, enqueueOrSend, interrupt, popQueued, clear, newSession, resume, setModelRuntime, killSession, answerQuestion,
   };
 }

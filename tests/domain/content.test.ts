@@ -3,6 +3,7 @@ import {
   buildUserContent,
   imageMarker,
   toImageBlock,
+  fromImageBlock,
   attachmentLabel,
   type ImageAttachment,
   type ImageBlock,
@@ -38,6 +39,19 @@ test("buildUserContent returns [] when there is nothing to send", () => {
 
 test("buildUserContent text-only has no image blocks", () => {
   expect(buildUserContent("hi")).toEqual([{ type: "text", text: "hi" }]);
+});
+
+test("fromImageBlock round-trips toImageBlock (media type + data survive, id reassigned)", () => {
+  const a = fromImageBlock(toImageBlock(att({ id: 7, data: "QUJD" })), 1); // "ABC"
+  expect(a.id).toBe(1);
+  expect(a.mediaType).toBe("image/png");
+  expect(a.data).toBe("QUJD");
+});
+
+test("fromImageBlock recomputes bytes from the base64 length, honoring padding", () => {
+  expect(fromImageBlock(block("QUJD"), 1).bytes).toBe(3); // "ABC" — no padding
+  expect(fromImageBlock(block("QUI="), 1).bytes).toBe(2); // "AB" — one pad char
+  expect(fromImageBlock(block("QQ=="), 1).bytes).toBe(1); // "A"  — two pad chars
 });
 
 test("imageMarker / toImageBlock / attachmentLabel formatting", () => {

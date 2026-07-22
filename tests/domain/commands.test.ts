@@ -20,12 +20,14 @@ const CMDS: Command[] = [
 ];
 
 // A CommandCtx stub that records what each method was called with.
-function stubCtx(): CommandCtx & { prints: string[]; prompts: { wire: string; display?: string }[]; usageOpens: number } {
+function stubCtx(): CommandCtx & { prints: string[]; prompts: { wire: string; display?: string }[]; usageOpens: number; asks: string[] } {
   const prints: string[] = [];
   const prompts: { wire: string; display?: string }[] = [];
+  const asks: string[] = [];
   const ctx = {
     prints,
     prompts,
+    asks,
     usageOpens: 0,
     print: (t: string) => prints.push(t),
     sendPrompt: (wire: string, display?: string) => prompts.push({ wire, display }),
@@ -40,6 +42,7 @@ function stubCtx(): CommandCtx & { prints: string[]; prompts: { wire: string; di
     session: () => "abcd",
     usage: () => ({ input: 0, output: 0, cacheRead: 0, cacheCreate: 0, costUsd: 0 }),
     showUsage: () => { ctx.usageOpens++; },
+    quickAsk: (q: string) => { asks.push(q); },
   };
   return ctx;
 }
@@ -155,6 +158,22 @@ describe("/usage command", () => {
     expect(dispatchCommand("/cost", ctx, COMMANDS)).toBe(true);
     expect(ctx.prints[0]).toContain("usage this session:");
     expect(ctx.prints[0]).toContain("2.0k");
+  });
+});
+
+describe("/ask command", () => {
+  test("forwards the question to ctx.quickAsk()", () => {
+    const ctx = stubCtx();
+    expect(dispatchCommand("/ask what is a closure?", ctx, COMMANDS)).toBe(true);
+    expect(ctx.asks).toEqual(["what is a closure?"]);
+    expect(ctx.prints).toEqual([]);
+  });
+
+  test("bare /ask prints usage and does not fire a call", () => {
+    const ctx = stubCtx();
+    expect(dispatchCommand("/ask", ctx, COMMANDS)).toBe(true);
+    expect(ctx.asks).toEqual([]);
+    expect(ctx.prints[0]).toContain("usage: /ask");
   });
 });
 

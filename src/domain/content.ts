@@ -31,6 +31,16 @@ export const toImageBlock = (a: ImageAttachment): ImageBlock => ({
   source: { type: "base64", media_type: a.mediaType, data: a.data },
 });
 
+// Reverse of toImageBlock — a queued message carries wire-format blocks, so when it's
+// pulled back into the composer for editing the blocks become attachments again. Ids are
+// reassigned 1..n by the caller (they match the "[Image #N]" markers already in the text,
+// since attachSeq resets per message); bytes is recomputed from the base64 length.
+export const fromImageBlock = (b: ImageBlock, id: number): ImageAttachment => {
+  const d = b.source.data;
+  const padding = d.endsWith("==") ? 2 : d.endsWith("=") ? 1 : 0;
+  return { id, mediaType: b.source.media_type, data: d, bytes: (d.length / 4) * 3 - padding };
+};
+
 // Compose the content array: images first, then a text block only when non-empty.
 // Returns [] when there's nothing to send (caller should skip the write).
 export function buildUserContent(text: string, images: ImageBlock[] = []): ContentBlock[] {
