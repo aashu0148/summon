@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { defaultTextareaKeyBindings } from "@opentui/core";
 import type { Usage, AskQuestion } from "../session/claude-session.ts";
 import type { Theme } from "./theme.ts";
@@ -121,4 +122,16 @@ export const CWD = (() => {
   if (p.startsWith(home + "/")) p = "~" + p.slice(home.length);
   if (p.length > 30) p = "…/" + p.split("/").slice(-2).join("/");
   return p;
+})();
+
+// Current git branch for the cwd (fixed for the process, "" if not a repo).
+export const GIT_BRANCH = (() => {
+  try {
+    const r = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" });
+    if (r.status !== 0) return "";
+    const b = (r.stdout || "").trim();
+    return b === "HEAD" ? "" : b;
+  } catch {
+    return "";
+  }
 })();
