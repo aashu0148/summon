@@ -13,6 +13,8 @@ import { useAttention } from "./useAttention.ts";
 import type { AttentionReason } from "../../domain/attention.ts";
 import { terminalNotifierHint } from "../../domain/notify.ts";
 import { loadConfig, saveConfig } from "../../config.ts";
+import { fetchUsage } from "../../session/usage-client.ts";
+import { parseUsage, sessionUsageWarning } from "../../domain/usage.ts";
 
 // File-mutating tools already get a nicer "EDIT ✎ path +N −M" row via the file_change
 // event, so we don't also add a plain TOOL trace row for them (would double up).
@@ -79,6 +81,20 @@ export function useConversation() {
   const labelRef = useRef(PROJECT); // latest tab label (chat name), kept fresh by the title effect
 
   const pushSys = (text: string) => setTurns((p) => [...p, { role: "sys", text }]);
+  const pushUsage = (text: string) => setTurns((p) => [...p, { role: "usage", text }]);
+
+  // Fire-and-forget usage check at session start. The OAuth usage endpoint is metadata
+  // only — it costs no tokens — so we can safely poll it on every fresh session and warn
+  // the user (once, inline) when the current session is over halfway used. Best-effort:
+  // any auth/network failure is swallowed so a session never blocks on it.
+  const warnIfUsageHigh = useCallback(async () => {
+    try {
+      const msg = sessionUsageWarning(parseUsage(await fetchUsage()), Date.now());
+      if (msg) pushUsage(msg);
+    } catch {
+      // no login / offline / expired token — stay quiet, /usage will surface the real error
+    }
+  }, []);
 
   // Stable event handler — reads/writes only refs + stable setState fns.
   const onEvent = useCallback((e: SessionEvent) => {
@@ -197,7 +213,8 @@ export function useConversation() {
     s.on("event", onEvent);
     sessionRef.current = s;
     s.spawn({ ...opts, model: opts.model ?? modelRef.current });
-  }, [onEvent]);
+    void warnIfUsageHigh(); // background usage nudge; never blocks the spawn
+  }, [onEvent, warnIfUsageHigh]);
 
   useEffect(() => {
     startSession();

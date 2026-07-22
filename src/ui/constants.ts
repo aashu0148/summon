@@ -4,7 +4,7 @@ import type { Usage, AskQuestion } from "../session/claude-session.ts";
 import type { Theme } from "./theme.ts";
 import type { FileEdit } from "../domain/file-edits.ts";
 
-export type Role = "you" | "claude" | "sys" | "err" | "file" | "write" | "tool";
+export type Role = "you" | "claude" | "sys" | "err" | "file" | "write" | "tool" | "usage";
 // `file` rows carry their accumulated edit so a following same-file edit can fold into
 // them (see foldFileEdit) rather than re-parsing the counts back out of `text`.
 export type Turn = { role: Role; text: string; file?: FileEdit };
@@ -98,11 +98,11 @@ export function groupTurns(turns: Turn[]): TurnGroup[] {
   return groups;
 }
 
-export const LABEL_TEXT: Record<Role, string> = { you: "YOU", claude: "CLAUDE", sys: "SYS", err: "ERR", file: "EDIT", write: "WRITE", tool: "TOOL" };
+export const LABEL_TEXT: Record<Role, string> = { you: "YOU", claude: "CLAUDE", sys: "SYS", err: "ERR", file: "EDIT", write: "WRITE", tool: "TOOL", usage: "⚠  USAGE LIMIT" };
 export const labelFg = (t: Theme, role: Role) =>
   role === "you" ? t.user : role === "claude" ? t.accent : role === "sys" ? t.sys : role === "file" || role === "write" ? t.ok : role === "tool" ? t.accentDim : t.warn;
 export const bodyFg = (t: Theme, role: Role) =>
-  role === "claude" ? t.ink : role === "err" ? t.warn : role === "file" || role === "write" ? t.ok : role === "tool" ? t.accentDim : t.muted;
+  role === "claude" ? t.ink : role === "err" ? t.warn : role === "file" || role === "write" ? t.ok : role === "tool" ? t.accentDim : role === "usage" ? t.ink : t.muted;
 
 export const ZERO: Usage = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
 

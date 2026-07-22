@@ -21,7 +21,29 @@ const Transcript = memo(function Transcript({ t, turns }: { t: Theme; turns: Tur
           of bulk to the transcript. The ephemeral "what claude is doing" status line still
           covers this. To bring them back, drop the `.filter(...)`. */}
       {groupTurns(turns.filter((turn) => turn.role !== "tool")).map((group, i) =>
-        group.role === "you" ? (
+        group.role === "usage" ? (
+          // Usage warnings can't read like an ordinary "SYS" line or the user scrolls past
+          // them. Give them a full heavy border in the warn color + a shaded panel so they
+          // land like the /usage overlay — impossible to miss at session start.
+          <box
+            key={i}
+            flexDirection="column"
+            marginTop={i === 0 ? 0 : 1}
+            border
+            borderStyle="heavy"
+            borderColor={t.warn}
+            backgroundColor={t.panel}
+            paddingLeft={2}
+            paddingRight={2}
+            paddingTop={1}
+            paddingBottom={1}
+          >
+            <text content={LABEL_TEXT.usage} fg={t.warn} attributes={TextAttributes.BOLD} />
+            {group.texts.map((text, j) => (
+              <text key={j} content={text} fg={t.ink} marginTop={1} />
+            ))}
+          </box>
+        ) : group.role === "you" ? (
           // User messages get an opencode-style treatment: a colored accent bar on the
           // left and a shaded background, instead of a "YOU" label. The bar and tint both
           // track the active theme.
