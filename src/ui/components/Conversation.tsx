@@ -69,7 +69,7 @@ const Transcript = memo(function Transcript({ t, turns }: { t: Theme; turns: Tur
           <box key={i} flexDirection="column" marginTop={i === 0 ? 0 : 1}>
             <text content={LABEL_TEXT[group.role]} fg={labelFg(t, group.role)} />
             {group.texts.map((text, j) =>
-              group.role === "claude" ? (
+              group.role === "claude" || group.role === "ask" ? (
                 <markdown key={j} content={text} syntaxStyle={md} fg={t.ink} conceal marginTop={j === 0 ? 0 : 1} />
               ) : (
                 <text key={j} content={text} fg={bodyFg(t, group.role)} marginTop={j === 0 ? 0 : 1} />

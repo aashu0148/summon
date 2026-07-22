@@ -5,6 +5,7 @@ import { THEMES, THEME_NAMES, getTheme, shortModel, type Theme } from "./theme.t
 import { loadConfig, saveConfig } from "../config.ts";
 import { COMMANDS, dispatchCommand, activeSlashToken, type CommandCtx } from "../domain/commands.ts";
 import { loadSkills, skillsAsCommands } from "../domain/skills.ts";
+import { quickAsk } from "../domain/quick-ask.ts";
 import { fmtTok, totalTok } from "../lib/format.ts";
 import { MENTION_RE } from "./constants.ts";
 import { useConversation } from "./hooks/useConversation.ts";
@@ -83,6 +84,15 @@ export function App() {
     session: () => conv.status.session,
     usage: () => ({ ...conv.sessionTok, costUsd: conv.status.cost }),
     showUsage: usage.showUsage,
+    // Fire a throwaway Haiku call with the recent transcript as context; print the reply
+    // inline as a SYS line. Runs off to the side — no wire message, no main-session growth.
+    quickAsk: (question: string) => {
+      conv.pushSys("· asking haiku…");
+      void quickAsk(conv.turns, question).then((ans) => {
+        if (ans) conv.pushAsk(ans);
+        else conv.pushSys("ask: no answer — try again");
+      });
+    },
   };
 
   const askFlow = useAskFlow({

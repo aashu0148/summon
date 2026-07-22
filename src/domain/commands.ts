@@ -32,6 +32,8 @@ export type CommandCtx = {
   usage: () => { input: number; output: number; cacheRead: number; cacheCreate: number; costUsd: number };
   /** open the plan-usage overlay (fetches real subscription limits from Anthropic) */
   showUsage: () => void;
+  /** fire a cheap Haiku one-shot answer (recent context only) and print it inline */
+  quickAsk: (question: string) => void;
 };
 
 /** Render session usage totals as the multi-line body of the `/usage` output. Pure so it's testable. */
@@ -114,6 +116,15 @@ export const COMMANDS: Command[] = [
       const name = args.trim();
       if (name) ctx.setTheme(name);
       else ctx.openPicker("theme");
+    },
+  },
+  {
+    name: "ask",
+    description: "cheap Haiku answer using recent context",
+    run: (args, ctx) => {
+      const q = args.trim();
+      if (!q) { ctx.print("usage: /ask <question>  ·  answers from Haiku using the last few turns"); return; }
+      ctx.quickAsk(q);
     },
   },
   {

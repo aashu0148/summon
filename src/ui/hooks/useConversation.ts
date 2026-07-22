@@ -82,6 +82,9 @@ export function useConversation() {
 
   const pushSys = (text: string) => setTurns((p) => [...p, { role: "sys", text }]);
   const pushUsage = (text: string) => setTurns((p) => [...p, { role: "usage", text }]);
+  // /ask replies render like a Claude turn (markdown body) but under an ASK label, so
+  // they read as a side-answer, not part of the main session — see quick-ask.ts.
+  const pushAsk = (text: string) => setTurns((p) => [...p, { role: "ask", text }]);
 
   // Fire-and-forget usage check at session start. The OAuth usage endpoint is metadata
   // only — it costs no tokens — so we can safely poll it on every fresh session and warn
@@ -378,6 +381,6 @@ export function useConversation() {
     // AskUserQuestion state (handlers are composed in useAskFlow)
     ask, setAsk, askIdx, setAskIdx, otherMode, setOtherMode, askAnsRef,
     // actions
-    pushSys, enqueueOrSend, interrupt, popQueued, clear, newSession, resume, setModelRuntime, killSession, answerQuestion,
+    pushSys, pushAsk, enqueueOrSend, interrupt, popQueued, clear, newSession, resume, setModelRuntime, killSession, answerQuestion,
   };
 }
