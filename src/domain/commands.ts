@@ -4,6 +4,7 @@
 // prose. We intercept a leading "/" in the input and act locally instead.
 
 import { fmtTok, inTok } from "../lib/format.ts";
+import type { ReplyStyle } from "./reply-style.ts";
 
 export type CommandCtx = {
   /** push a dim SYS line into the conversation */
@@ -34,6 +35,8 @@ export type CommandCtx = {
   showUsage: () => void;
   /** fire a cheap Haiku one-shot answer (recent context only) and print it inline */
   quickAsk: (question: string) => void;
+  /** toggle/switch the active reply style; returns the new active style (null = off) */
+  setReplyStyle: (style: ReplyStyle) => ReplyStyle | null;
 };
 
 /** Render session usage totals as the multi-line body of the `/usage` output. Pure so it's testable. */
@@ -125,6 +128,22 @@ export const COMMANDS: Command[] = [
       const q = args.trim();
       if (!q) { ctx.print("usage: /ask <question>  ·  answers from Haiku using the last few turns"); return; }
       ctx.quickAsk(q);
+    },
+  },
+  {
+    name: "caveman",
+    description: "toggle terse caveman-style replies",
+    run: (_args, ctx) => {
+      const now = ctx.setReplyStyle("caveman");
+      ctx.print(now === "caveman" ? "caveman mode on — replies will be terse" : "caveman mode off");
+    },
+  },
+  {
+    name: "crossquestion",
+    description: "toggle quick direct answers for cross-questioning",
+    run: (_args, ctx) => {
+      const now = ctx.setReplyStyle("crossquestion");
+      ctx.print(now === "crossquestion" ? "crossquestion mode on — quick direct answers" : "crossquestion mode off");
     },
   },
   {

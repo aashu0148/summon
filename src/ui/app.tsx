@@ -6,6 +6,7 @@ import { loadConfig, saveConfig } from "../config.ts";
 import { COMMANDS, dispatchCommand, activeSlashToken, type CommandCtx } from "../domain/commands.ts";
 import { loadSkills, skillsAsCommands } from "../domain/skills.ts";
 import { quickAsk } from "../domain/quick-ask.ts";
+import { wrapPrompt, toggleStyle, type ReplyStyle } from "../domain/reply-style.ts";
 import { fmtTok, totalTok } from "../lib/format.ts";
 import { MENTION_RE } from "./constants.ts";
 import { useConversation } from "./hooks/useConversation.ts";
@@ -29,6 +30,7 @@ import { toImageBlock } from "../domain/content.ts";
 export function App() {
   const renderer = useRenderer();
   const [themeName, setThemeName] = useState<string>(() => loadConfig().theme ?? "amber");
+  const [replyStyle, setReplyStyle] = useState<ReplyStyle | null>(null); // /caveman | /crossquestion, session-only
   const t: Theme = getTheme(themeName);
 
   // The conversation engine — session, streaming state, queue, titles (see hook).
@@ -68,11 +70,16 @@ export function App() {
     process.exit(0);
   };
 
+  // Caveman mode appends the terse-style instruction to the WIRE text only; the
+  // transcript (display) always shows what the user/skill actually wrote.
+  const send = (wire: string, display = wire, images?: Parameters<typeof conv.enqueueOrSend>[2]) =>
+    conv.enqueueOrSend(wrapPrompt(wire, replyStyle), display, images);
+
   const ctx: CommandCtx = {
     print: conv.pushSys,
     // Skills forward a synthesized prompt. Route through the same queue as typed input
     // so it respects an in-flight turn; `display` keeps the transcript short.
-    sendPrompt: conv.enqueueOrSend,
+    sendPrompt: send,
     clear: conv.clear,
     newSession: conv.newSession,
     resume: conv.resume,
@@ -92,6 +99,11 @@ export function App() {
         if (ans) conv.pushAsk(ans);
         else conv.pushSys("ask: no answer — try again");
       });
+    },
+    setReplyStyle: (style: ReplyStyle) => {
+      const next = toggleStyle(replyStyle, style);
+      setReplyStyle(next);
+      return next;
     },
   };
 
@@ -196,7 +208,7 @@ export function App() {
     if (text) composer.recordHistory(text);
     if (text && dispatchCommand(text, ctx, allCommands)) return; // slash command or skill — not forwarded verbatim
     // Busy: queue it; the drain effect sends the next message when the turn frees up.
-    conv.enqueueOrSend(text, text, images.length ? images : undefined);
+    send(text, text, images.length ? images : undefined);
   };
 
   const model = shortModel(conv.status.model);

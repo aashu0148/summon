@@ -10,6 +10,7 @@ import {
   type Command,
   type CommandCtx,
 } from "../../src/domain/commands.ts";
+import type { ReplyStyle } from "../../src/domain/reply-style.ts";
 
 // Minimal command set for deterministic matching tests (independent of the real
 // built-ins, which may grow over time).
@@ -20,7 +21,7 @@ const CMDS: Command[] = [
 ];
 
 // A CommandCtx stub that records what each method was called with.
-function stubCtx(): CommandCtx & { prints: string[]; prompts: { wire: string; display?: string }[]; usageOpens: number; asks: string[] } {
+function stubCtx(): CommandCtx & { prints: string[]; prompts: { wire: string; display?: string }[]; usageOpens: number; asks: string[]; style: ReplyStyle | null } {
   const prints: string[] = [];
   const prompts: { wire: string; display?: string }[] = [];
   const asks: string[] = [];
@@ -43,6 +44,8 @@ function stubCtx(): CommandCtx & { prints: string[]; prompts: { wire: string; di
     usage: () => ({ input: 0, output: 0, cacheRead: 0, cacheCreate: 0, costUsd: 0 }),
     showUsage: () => { ctx.usageOpens++; },
     quickAsk: (q: string) => { asks.push(q); },
+    style: null as ReplyStyle | null,
+    setReplyStyle: (s: ReplyStyle) => { ctx.style = ctx.style === s ? null : s; return ctx.style; },
   };
   return ctx;
 }
@@ -174,6 +177,32 @@ describe("/ask command", () => {
     expect(dispatchCommand("/ask", ctx, COMMANDS)).toBe(true);
     expect(ctx.asks).toEqual([]);
     expect(ctx.prints[0]).toContain("usage: /ask");
+  });
+});
+
+describe("reply-style commands", () => {
+  test("/caveman toggles on then off", () => {
+    const ctx = stubCtx();
+    dispatchCommand("/caveman", ctx, COMMANDS);
+    dispatchCommand("/caveman", ctx, COMMANDS);
+    expect(ctx.prints[0]).toContain("caveman mode on");
+    expect(ctx.prints[1]).toContain("caveman mode off");
+  });
+
+  test("/crossquestion toggles on then off", () => {
+    const ctx = stubCtx();
+    dispatchCommand("/crossquestion", ctx, COMMANDS);
+    dispatchCommand("/crossquestion", ctx, COMMANDS);
+    expect(ctx.prints[0]).toContain("crossquestion mode on");
+    expect(ctx.prints[1]).toContain("crossquestion mode off");
+  });
+
+  test("activating one style replaces the other", () => {
+    const ctx = stubCtx();
+    dispatchCommand("/caveman", ctx, COMMANDS);
+    dispatchCommand("/crossquestion", ctx, COMMANDS);
+    expect(ctx.prints[1]).toContain("crossquestion mode on");
+    expect(ctx.style).toBe("crossquestion");
   });
 });
 
