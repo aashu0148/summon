@@ -17,6 +17,7 @@
 // We read until the `result` event, whose `result` field is the full reply text.
 
 import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
 import { resolveClaudeLaunch } from "./claude-bin.ts";
 
 const BASE_ARGS = [
@@ -54,10 +55,15 @@ export function runOneShot(
 
     try {
       const { command, shell } = resolveClaudeLaunch();
+      // Run in the OS temp dir, NOT process.cwd(): a throwaway interactive claude persists
+      // its own <id>.jsonl under ~/.claude/projects/<cwd>/. If that were the real project
+      // dir, every /ask (and title-gen) call would litter the /resume picker with a phantom
+      // session (listSessions reads every .jsonl there). tmpdir keeps them out of it, and
+      // the prompt already carries all needed context as text — no tools/cwd required.
       proc = spawn(command, [...BASE_ARGS, "--model", model], {
         stdio: ["pipe", "pipe", "ignore"],
         env,
-        cwd: process.cwd(),
+        cwd: tmpdir(),
         shell,
       });
       // If the resolved binary still can't be exec'd, don't hang — caller falls back.
